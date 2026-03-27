@@ -3,17 +3,18 @@
 Интегрирование уравнения движения поезда по ПТР РЖД 2016.
 
 Модуль не знает ни о SimPy, ни о станции — только физика и SciPy.
-Публик: solve_route, TractionCache, head_to_tail_profile.
+Публичный API: solve_route, TractionCache, head_to_tail_profile.
 """
 from __future__ import annotations
 
+import bisect
 import logging
+import time
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Callable, Literal
 
 import numpy as np
 from scipy.integrate import solve_ivp
-from scipy.integrate import OdeSolution  # noqa: F401 — для аннотаций
 
 from src.models import PhysicsResult, RouteSection, TrainConfig
 
@@ -22,12 +23,15 @@ logger = logging.getLogger(__name__)
 # Режим движения: тяга / выбег / торможение
 DriveMode = Literal["traction", "coasting", "braking"]
 
-# Перевод км/ч → м/с и обратно
+# Перевод единиц
 _KMH_TO_MS: float = 1.0 / 3.6
 _MS_TO_KMH: float = 3.6
 
 # Ускорение свободного падения, м/с²
 _G: float = 9.81
+
+# Коэффициент инерции вращающихся масс для грузового состава (ПТР 2016, §1.1)
+_GAMMA_FREIGHT: float = 0.06
 
 
 # ---------------------------------------------------------------------------
@@ -38,64 +42,102 @@ def _fk_kn(v_kmh: float, train: TrainConfig) -> float:
     """
     Расчётная сила тяги Fk(v), кН.
 
-    Интерполирует по fk_table локомотива. При v > v_max возвращает 0.
-    Fk(v) уже является min(тяговая, сцепная) — это сделано в loader.py.
+    Интерполирует по fk_table локомотива.
+    При v >= v_max → 0.0 (локомотив не может тянуть быстрее конструкционной скорости).
+    При v <= 0     → fk_table[0] (значение при трогании с места).
 
+    fk_table уже является min(тяговая, сцепная) — это выполнено в loader.py.
     ПТР РЖД 2016, §1.1.
     """
-    # TODO: реализовать через np.interp(v_kmh, train.loco.v_table, train.loco.fk_table)
-    # При v >= v_max → 0.0
-    # При v <= 0     → fk_table[0]
-    pass
+    if v_kmh <= 0.0:
+        return float(train.loco.fk_table[0])
+    if v_kmh >= train.loco.v_max:
+        return 0.0
+    return float(np.interp(v_kmh, train.loco.v_table, train.loco.fk_table))
 
 
 def _wox_kn(v_kmh: float, train: TrainConfig) -> float:
     """
     Основное удельное сопротивление движению локомотива wox(v), Н/кН.
 
-    Интерполирует по wox_table. Возвращает Н/кН (безразмерная часть формулы W).
-
-    ПТР РЖД 2016, §1.2, формулы 19–20.
+    Интерполирует по wox_table. Коэффициенты таблицы рассчитаны в loader.py
+    по формулам 19–20 ПТР РЖД 2016, §1.2, табл. 2.
     """
-    # TODO: np.interp(v_kmh, train.loco.v_table, train.loco.wox_table)
-    pass
+    return float(np.interp(v_kmh, train.loco.v_table, train.loco.wox_table))
+
+
+# Коэффициенты формул удельного сопротивления вагонов (ПТР РЖД 2016, §1.2, табл. 5–6).
+# Формат: {wagon_type: {"heavy": (a, b, c), "light": (a, b, c)}}
+# «heavy» — q0 >= 6 т/ось, «light» — q0 < 6 т/ось.
+_WO_WAGON_COEFFS: dict[int, dict[str, tuple[float, float, float]]] = {
+    4: {
+        "heavy": (0.7, 3.0, 0.1, 0.0025),   # формула 3 ПТР 2016 (нагр., подш. качения)
+        "light": (0.7, 8.0, 0.1, 0.0025),   # формула 1 ПТР 2016 (пор., подш. качения)
+    },
+    6: {
+        "heavy": (0.7, 3.0, 0.1, 0.0025),   # формула 5 ПТР 2016 (6-осн., нагр.)
+        "light": (0.7, 8.0, 0.1, 0.0025),   # формула 4 ПТР 2016 (6-осн., пор.)
+    },
+    8: {
+        "heavy": (0.7, 3.0, 0.1, 0.0025),   # формула 6 ПТР 2016 (8-осн., нагр.)
+        "light": (0.7, 8.0, 0.1, 0.0025),   # формула 6 ПТР 2016 (8-осн., пор.)
+    },
+}
 
 
 def _wo_wagons_kn(v_kmh: float, train: TrainConfig) -> float:
     """
-    Основное удельное сопротивление вагонов wo'(v), Н/кН.
+    Основное удельное сопротивление движению вагонов wo'(v), Н/кН.
 
-    Формула зависит от типа вагона (wagon_type) и нагрузки от оси q0.
-    ПТР РЖД 2016, §1.2, табл. 5 (4-осные) / табл. 6 (8-осные).
+    Формулы ПТР РЖД 2016, §1.2, табл. 5–6 (формулы 1–6):
+        wo' = a + (b + c·v + d·v²) / q0
+
+    Коэффициенты a, b, c, d зависят от типа вагона (wagon_type) и нагрузки:
+        q0 >= 6 т/ось — гружёный («heavy»),
+        q0  < 6 т/ось — порожний («light»).
+
+    Поддерживаемые wagon_type: 4, 6, 8 (по числу осей).
     """
-    # TODO: реализовать формулу по wagon_type:
-    #   4-осные: wo' = a + b*v + c*v^2   (ПТР 2016, табл.5, строка по q0)
-    #   6-осные, 8-осные — аналогично
-    # Коэффициенты a,b,c выбирать по диапазону q0 (lightly/fully loaded).
-    pass
+    if train.wagon_type not in _WO_WAGON_COEFFS:
+        raise ValueError(
+            f"Неизвестный тип вагона wagon_type={train.wagon_type}. "
+            f"Допустимые значения: {sorted(_WO_WAGON_COEFFS)}"
+        )
+
+    bucket = "heavy" if train.q0 >= 6.0 else "light"
+    a, b, c, d = _WO_WAGON_COEFFS[train.wagon_type][bucket]
+    v = v_kmh
+    return a + (b + c * v + d * v ** 2) / train.q0
 
 
 def _wi_kn(grade_per_mill: float, train_mass_t: float) -> float:
     """
     Сила сопротивления от уклона Wi, кН.
 
-    Wi = i * (P + Q) / 1000,  где i в ‰, (P+Q) в т.
-    ПТР РЖД 2016, §1.3, формула 27.
+    ПТР РЖД 2016, §1.3, формула 67:
+        wi = 9,81 · i  [Н/кН],
+        Wi = wi · (P + Q) / 1000  [кН].
+
+    Знак Wi совпадает со знаком уклона i:
+        i > 0 — подъём (сопротивление),
+        i < 0 — спуск (ускоряющая сила, добавляется со знаком минус в уравнение).
     """
-    # TODO: return grade_per_mill * train_mass_t / 1000.0
-    pass
+    return grade_per_mill * _G * train_mass_t / 1000.0
 
 
 def _wr_kn(radius_m: float, train_mass_t: float) -> float:
     """
     Сила сопротивления от кривой Wr, кН.
 
-    wr = 700 / R  (ПТР РЖД 2016, §1.4, формула 28).
+    ПТР РЖД 2016, §1.4, формула 68:
+        wr = 700 / R  [Н/кН],
+        Wr = wr · (P + Q) / 1000  [кН].
+
     При radius_m == 0 (прямой путь) возвращает 0.
     """
-    # TODO: if radius_m == 0: return 0.0
-    # return (700.0 / radius_m) * train_mass_t / 1000.0
-    pass
+    if not radius_m:
+        return 0.0
+    return (700.0 / radius_m) * _G * train_mass_t / 1000.0
 
 
 def _w_full_kn(
@@ -104,22 +146,25 @@ def _w_full_kn(
     section: RouteSection,
 ) -> float:
     """
-    Полное сопротивление движению W = Wox + Wo_wagons + Wi + Wr, кН.
+    Полное сопротивление движению W, кН.
 
-    Аргументы:
-        v_kmh   — текущая скорость, км/ч
-        train   — конфигурация состава
-        section — текущий участок маршрута (уклон, кривая)
+    W = Wox + Wo_wagons + Wi + Wr.
 
-    Возвращает суммарное сопротивление в кН (знак: сопротивление > 0).
+    Пересчёт удельных сопротивлений (Н/кН) в абсолютные силы (кН):
+        Wox      = wox · P · g / 1000
+        Wo_wagon = wo' · Q · g / 1000
+        Wi       = 9,81 · i · (P+Q) / 1000   (формула 67)
+        Wr       = (700/R) · 9,81 · (P+Q) / 1000  (формула 68)
+
+    Где P — масса локомотива (т), Q — масса вагонов (т).
     """
-    # TODO:
-    # wox  = _wox_kn(v_kmh, train) * train.loco.mass_t / 1000
-    # wo_w = _wo_wagons_kn(v_kmh, train) * (train.train_mass_t - train.loco.mass_t) / 1000
-    # wi   = _wi_kn(section.grade, train.train_mass_t)
-    # wr   = _wr_kn(section.radius, train.train_mass_t)
-    # return wox + wo_w + wi + wr
-    pass
+    wagon_mass_total_t = train.num_wagons * train.wagon_mass_t
+
+    wox   = _wox_kn(v_kmh, train)        * train.loco.mass_t       * _G / 1000.0
+    wo_w  = _wo_wagons_kn(v_kmh, train)  * wagon_mass_total_t       * _G / 1000.0
+    wi    = _wi_kn(section.grade,  train.train_mass_t)
+    wr    = _wr_kn(section.radius, train.train_mass_t)
+    return wox + wo_w + wi + wr
 
 
 def _bt_full_kn(v_kmh: float, train: TrainConfig) -> float:
@@ -127,13 +172,12 @@ def _bt_full_kn(v_kmh: float, train: TrainConfig) -> float:
     Расчётная тормозная сила Bt(v), кН.
 
     Интерполирует bt_table по текущей скорости.
-    При v <= 0 возвращает 0 (поезд уже стоит).
-
+    При v <= 0 поезд уже стоит — тормозная сила равна нулю.
     ПТР РЖД 2016, §2.2.
     """
-    # TODO: if v_kmh <= 0: return 0.0
-    # return float(np.interp(v_kmh, train.loco.v_table, train.loco.bt_table))
-    pass
+    if v_kmh <= 0.0:
+        return 0.0
+    return float(np.interp(v_kmh, train.loco.v_table, train.loco.bt_table))
 
 
 # ---------------------------------------------------------------------------
@@ -144,11 +188,17 @@ def _current_section(s_m: float, sections: list[RouteSection]) -> RouteSection:
     """
     Возвращает RouteSection, которому принадлежит координата s_m.
 
-    Если s_m вышла за последний участок — возвращает последний (терминальный случай).
+    Поиск через bisect_right по массиву s_end — O(log n).
+    Граничные случаи:
+        s_m <  sections[0].s_start → возвращает sections[0],
+        s_m >= sections[-1].s_end  → возвращает sections[-1].
     """
-    # TODO: перебрать sections, вернуть тот, у кого s_start <= s_m < s_end
-    # Граничный случай: s_m >= sections[-1].s_end → вернуть sections[-1]
-    pass
+    s_ends = [sec.s_end for sec in sections]
+    idx = bisect.bisect_right(s_ends, s_m)
+    # bisect_right возвращает позицию правее найденного,
+    # поэтому sections[idx] — первый участок с s_end > s_m
+    idx = min(idx, len(sections) - 1)
+    return sections[idx]
 
 
 def _ode(
@@ -165,54 +215,64 @@ def _ode(
     Возвращает: [dv/dt, ds/dt].
 
     Уравнение движения (ПТР РЖД 2016, §1.1, формула 1):
-        dv/dt = (Fk - W) / (M * (1 + gamma))
+        dv/dt = (Fk − W − Bt) / (M · (1 + γ))
 
-    где:
-        Fk    — сила тяги, кН  (0 при выбеге/торможении)
-        W     — полное сопротивление, кН
-        Bt    — тормозная сила, кН  (0 при тяге/выбеге)
-        M     — масса состава, т (= кН·с²/м при делении на g)
-        gamma — коэффициент инерции вращающихся масс (≈ 0.06 для груз. состава)
+    Где:
+        Fk — сила тяги, кН      (0 при выбеге и торможении)
+        W  — полное сопротивление, кН
+        Bt — тормозная сила, кН (0 при тяге и выбеге)
+        M  — масса состава, т   (кН·с²/м при делении на g, но т·(1+γ) напрямую даёт м/с²
+                                  при единицах кН и т: 1 кН/т = 1 м/с²)
+        γ  = 0,06 — коэффициент инерции вращающихся масс (§1.1)
 
-    ds/dt = v_ms (тривиальное кинематическое уравнение).
+    ds/dt = v_ms.
     """
-    # TODO:
-    # v_ms, s_m = y
-    # v_kmh = v_ms * _MS_TO_KMH
-    # section = _current_section(s_m, sections)
-    #
-    # fk = _fk_kn(v_kmh, train)     if mode == "traction" else 0.0
-    # bt = _bt_full_kn(v_kmh, train) if mode == "braking"  else 0.0
-    # w  = _w_full_kn(v_kmh, train, section)
-    #
-    # gamma = 0.06  # ПТР 2016, §1.1 — для грузовых поездов
-    # M_eff = train.train_mass_t * (1.0 + gamma)   # т (эффективная масса)
-    #
-    # # Результирующая сила, кН → ускорение, м/с²
-    # # (делим кН на т: [кН/т = кН/(кН·с²/м)] → [м/с²])
-    # dv_dt = (fk - w - bt) / M_eff
-    # ds_dt = v_ms
-    # return [dv_dt, ds_dt]
-    pass
+    v_ms = max(y[0], 0.0)           # защита от численного ухода в отрицательные скорости
+    s_m  = y[1]
+    v_kmh = v_ms * _MS_TO_KMH
+
+    section = _current_section(s_m, sections)
+
+    fk = _fk_kn(v_kmh, train)      if mode == "traction" else 0.0
+    bt = _bt_full_kn(v_kmh, train) if mode == "braking"  else 0.0
+    w  = _w_full_kn(v_kmh, train, section)
+
+    # Эффективная масса с учётом инерции вращающихся масс
+    m_eff = train.train_mass_t * (1.0 + _GAMMA_FREIGHT)  # т
+
+    # кН / т = м/с² (потому что 1 кН = 1000 Н = 1000 кг·м/с², 1 т = 1000 кг)
+    dv_dt = (fk - w - bt) / m_eff
+    ds_dt = v_ms
+    return [dv_dt, ds_dt]
 
 
 def _make_events(
     sections: list[RouteSection],
-    v_limit_ms: float,
-) -> list:
+    v_limit_ms: float,  # noqa: ARG001 — зарезервировано для будущего ограничителя скорости
+) -> list[Callable]:
     """
-    Формирует список событий для solve_ivp.
+    Формирует список терминальных событий для solve_ivp.
 
-    Нужны два типа событий:
-    1. Поезд достиг конца маршрута: s >= s_end последнего участка.
-    2. Скорость упала до нуля: v <= 0 (остановка).
+    Событие 1 — конец маршрута: s >= s_end последнего участка.
+    Событие 2 — остановка:      v <= 0.
 
-    Оба события терминальные (terminal=True).
+    Оба события терминальные (terminal=True), т.е. интегрирование прекращается.
     """
-    # TODO: реализовать два callable-объекта с атрибутами .terminal и .direction
-    # event_end_of_route(t, y): y[1] - sections[-1].s_end  (direction=+1)
-    # event_stop(t, y):         y[0]                        (direction=-1)
-    pass
+    s_route_end = sections[-1].s_end
+
+    def event_end_of_route(t: float, y: list[float]) -> float:  # noqa: ARG001
+        return y[1] - s_route_end
+
+    event_end_of_route.terminal  = True   # type: ignore[attr-defined]
+    event_end_of_route.direction = 1      # type: ignore[attr-defined]  # только при росте s
+
+    def event_stop(t: float, y: list[float]) -> float:  # noqa: ARG001
+        return y[0]  # = v_ms; пересекает 0 при остановке
+
+    event_stop.terminal  = True   # type: ignore[attr-defined]
+    event_stop.direction = -1     # type: ignore[attr-defined]  # только при убывании v
+
+    return [event_end_of_route, event_stop]
 
 
 def solve_route(
@@ -229,46 +289,84 @@ def solve_route(
 
     Параметры:
         train      — конфигурация состава
-        sections   — список участков маршрута (по порядку, без пробелов)
+        sections   — участки маршрута (непрерывная последовательность)
         consist_id — идентификатор состава (для кэша и логов)
         route_id   — идентификатор маршрута
-        v0_kmh     — начальная скорость, км/ч (по умолчанию 0 — трогание)
+        v0_kmh     — начальная скорость, км/ч (0 = трогание с места)
         mode       — режим: тяга / выбег / торможение
-        t_max_s    — предельное время интегрирования, с (защита от зависания)
+        t_max_s    — верхняя граница интегрирования, с (защита от зависания)
 
     Возвращает:
         PhysicsResult с заполненными v_profile, t_profile, s_points, head_to_tail_s.
 
-    Метод: RK45 (scipy.integrate.solve_ivp, method='RK45').
+    Метод: RK45 (scipy.integrate.solve_ivp).
     """
-    # TODO:
-    # 1. Проверить, что sections не пуст и участки идут непрерывно
-    #    (sections[i].s_end == sections[i+1].s_start).
-    # 2. Собрать начальный вектор: y0 = [v0_kmh * _KMH_TO_MS, sections[0].s_start]
-    # 3. Собрать события через _make_events(sections, v_limit_ms)
-    # 4. Вызвать solve_ivp:
-    #    sol = solve_ivp(
-    #        fun=lambda t, y: _ode(t, y, train, sections, mode),
-    #        t_span=(0.0, t_max_s),
-    #        y0=y0,
-    #        method="RK45",
-    #        events=events,
-    #        dense_output=False,
-    #        max_step=1.0,          # шаг ≤1 с для точности v-профиля
-    #        rtol=1e-4,
-    #        atol=1e-6,
-    #    )
-    # 5. Проверить sol.status: 0 = OK, 1 = событие, -1 = ошибка → ValueError
-    # 6. Извлечь s_points = sol.y[1], v_profile = sol.y[0] * _MS_TO_KMH
-    # 7. Построить t_profile = sol.t (время прибытия головы в точку s)
-    # 8. Вычислить head_to_tail_s = head_to_tail_profile(result_stub, train.train_length_m)
-    # 9. logger.info(...)
-    # 10. Вернуть PhysicsResult
-    pass
+    _validate_sections(sections)
+
+    v_limit_ms = train.loco.v_max * _KMH_TO_MS
+    y0         = [v0_kmh * _KMH_TO_MS, sections[0].s_start]
+    events     = _make_events(sections, v_limit_ms)
+
+    sol = solve_ivp(
+        fun     = lambda t, y: _ode(t, y, train, sections, mode),
+        t_span  = (0.0, t_max_s),
+        y0      = y0,
+        method  = "RK45",
+        events  = events,
+        dense_output = False,
+        max_step= 1.0,       # шаг ≤1 с для достаточной точности v-профиля
+        rtol    = 1e-4,
+        atol    = 1e-6,
+    )
+
+    if sol.status == -1:
+        raise ValueError(
+            f"solve_ivp не сошёлся для consist='{consist_id}', route='{route_id}': "
+            f"{sol.message}"
+        )
+
+    # sol.status == 0  — достигнут t_max без события (нештатно, но не ошибка интегратора)
+    # sol.status == 1  — остановлено событием (штатный конец маршрута или остановка)
+    s_points  = sol.y[1]            # координата головы, м
+    v_profile = sol.y[0] * _MS_TO_KMH  # скорость, км/ч
+    t_profile = sol.t               # время прибытия головы в точку s, с
+    t_total_s = float(t_profile[-1])
+
+    # Профиль задержки хвоста относительно головы
+    ht_profile = head_to_tail_profile(
+        PhysicsResult(
+            consist_id   = consist_id,
+            route_id     = route_id,
+            t_total_s    = t_total_s,
+            v_profile    = v_profile,
+            t_profile    = t_profile,
+            s_points     = s_points,
+            head_to_tail_s = np.zeros_like(s_points),  # заглушка для рекурсии
+        ),
+        train.train_length_m,
+    )
+
+    result = PhysicsResult(
+        consist_id     = consist_id,
+        route_id       = route_id,
+        t_total_s      = t_total_s,
+        v_profile      = v_profile,
+        t_profile      = t_profile,
+        s_points       = s_points,
+        head_to_tail_s = ht_profile,
+    )
+
+    logger.info(
+        "solve_route: consist='%s', route='%s', mode=%s, "
+        "t_total=%.1f с, точек=%d, v_max=%.1f км/ч",
+        consist_id, route_id, mode,
+        t_total_s, len(s_points), float(np.max(v_profile)),
+    )
+    return result
 
 
 # ---------------------------------------------------------------------------
-# Блок 3 — Кэш предрасчитанных результатов
+# Блок 3 — Кэш предрассчитанных результатов
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -277,8 +375,9 @@ class TractionCache:
     Кэш результатов solve_route.
 
     Один экземпляр создаётся в main.py и передаётся в SimPy-процессы.
-    Ключ: "{consist_id}:{route_id}".
-    Повторный вызов get_or_compute с теми же ключами не интегрирует заново.
+    Ключ: "{consist_id}:{route_id}:{mode}:{v0_kmh}" — учитывает все параметры,
+    влияющие на результат интегрирования.
+    Повторный вызов get_or_compute с теми же параметрами не перезапускает ODE.
     """
     _store: dict[str, PhysicsResult] = field(default_factory=dict)
 
@@ -292,37 +391,48 @@ class TractionCache:
         mode: DriveMode = "traction",
     ) -> PhysicsResult:
         """
-        Возвращает кэшированный результат или вычисляет его через solve_route.
+        Возвращает кэшированный результат или вычисляет через solve_route.
 
-        При кэш-промахе логирует INFO с ключом и временем расчёта.
+        При промахе логирует INFO с ключом и временем расчёта.
         """
-        # TODO:
-        # key = f"{consist_id}:{route_id}"
-        # if key not in self._store:
-        #     logger.info("TractionCache: miss — вычисляем '%s'", key)
-        #     self._store[key] = solve_route(
-        #         train, sections, consist_id, route_id, v0_kmh, mode
-        #     )
-        # return self._store[key]
-        pass
+        key = f"{consist_id}:{route_id}:{mode}:{v0_kmh}"
+        if key not in self._store:
+            logger.info("TractionCache: miss — вычисляем '%s'", key)
+            t0 = time.perf_counter()
+            self._store[key] = solve_route(
+                train, sections, consist_id, route_id, v0_kmh, mode
+            )
+            elapsed = time.perf_counter() - t0
+            logger.info(
+                "TractionCache: '%s' посчитан за %.3f с", key, elapsed
+            )
+        return self._store[key]
 
     def invalidate(self, consist_id: str, route_id: str) -> None:
         """
-        Удаляет одну запись из кэша (например, при смене конфигурации состава).
-        Молча игнорирует несуществующий ключ.
+        Удаляет все записи с данной парой consist_id / route_id.
+
+        Молча игнорирует отсутствующие ключи. Используется при смене конфигурации
+        состава без перезапуска симуляции.
         """
-        # TODO: self._store.pop(f"{consist_id}:{route_id}", None)
-        pass
+        prefix = f"{consist_id}:{route_id}:"
+        keys_to_delete = [k for k in self._store if k.startswith(prefix)]
+        for k in keys_to_delete:
+            del self._store[k]
+        if keys_to_delete:
+            logger.debug(
+                "TractionCache: удалено %d записей для '%s:%s'",
+                len(keys_to_delete), consist_id, route_id,
+            )
 
     def clear(self) -> None:
         """Очищает весь кэш."""
-        # TODO: self._store.clear()
-        pass
+        self._store.clear()
+        logger.debug("TractionCache: кэш очищен.")
 
     def __len__(self) -> int:
         """Количество закэшированных результатов."""
-        # TODO: return len(self._store)
-        pass
+        return len(self._store)
 
 
 # ---------------------------------------------------------------------------
@@ -334,32 +444,32 @@ def head_to_tail_profile(
     train_length_m: float,
 ) -> np.ndarray:
     """
-    Строит массив Δt(s): запаздывание хвоста поезда относительно головы, с.
+    Строит массив Δt(s) — запаздывание хвоста поезда относительно головы, с.
 
-    Δt(s) = t_tail(s) - t_head(s),  где t_tail(s) = t_head(s - L).
+    Δt(s) = t_head(s) − t_head(s − L),
+
+    где L = train_length_m — полная длина состава (м),
+    t_head(s) = physics.t_profile — момент прохождения головой точки s.
 
     Используется в SimPy-процессе для определения момента освобождения секции:
     секция освобождается, когда хвост поезда прошёл её конец.
 
-    Аргументы:
-        physics        — результат solve_route
-        train_length_m — полная длина состава, м
+    При s − L < s_points[0] (хвост ещё не вошёл на маршрут) полагаем
+    t_tail = 0, т.е. Δt = t_head(s) — хвост задерживается на всё время хода
+    головы от начала маршрута.
 
-    Возвращает:
-        np.ndarray той же длины, что и physics.s_points.
-        Δt[i] = время между проходом головы точки s[i] и хвоста точки s[i].
+    Возвращает np.ndarray той же длины, что physics.s_points.
     """
-    # TODO:
-    # s = physics.s_points
-    # t = physics.t_profile
-    # # Координата хвоста в момент, когда голова в точке s[i]: s_tail = s[i] - L
-    # s_tail = s - train_length_m
-    # # Для s_tail < s[0]: хвост ещё не вошёл на маршрут → интерполируем
-    # # экстраполяцией влево (t = 0 при s < s[0]).
-    # t_tail = np.interp(s_tail, s, t, left=np.nan)
-    # delta_t = t - t_tail
-    # return delta_t
-    pass
+    s = physics.s_points
+    t = physics.t_profile
+
+    # Координата хвоста в момент, когда голова находится в точке s[i]
+    s_tail = s - train_length_m
+
+    # left=0.0: при s_tail < s[0] хвост ещё не вошёл на маршрут → t_tail = 0
+    t_tail  = np.interp(s_tail, s, t, left=0.0)
+    delta_t = t - t_tail
+    return delta_t
 
 
 # ---------------------------------------------------------------------------
@@ -370,17 +480,15 @@ def _validate_sections(sections: list[RouteSection]) -> None:
     """
     Проверяет, что секции образуют непрерывный маршрут без разрывов.
 
-    Бросает ValueError, если:
+    Бросает ValueError если:
     - список пуст,
-    - конец i-й секции не совпадает с началом (i+1)-й.
+    - конец i-й секции не совпадает (с точностью 1e-6 м) с началом (i+1)-й.
     """
-    # TODO:
-    # if not sections:
-    #     raise ValueError("Список секций пуст.")
-    # for i in range(len(sections) - 1):
-    #     if not np.isclose(sections[i].s_end, sections[i + 1].s_start):
-    #         raise ValueError(
-    #             f"Разрыв между секциями {i} и {i+1}: "
-    #             f"{sections[i].s_end} != {sections[i+1].s_start}"
-    #         )
-    pass
+    if not sections:
+        raise ValueError("Список секций пуст.")
+    for i in range(len(sections) - 1):
+        if not np.isclose(sections[i].s_end, sections[i + 1].s_start, atol=1e-6):
+            raise ValueError(
+                f"Разрыв между секциями {i} и {i + 1}: "
+                f"{sections[i].s_end} != {sections[i + 1].s_start}"
+            )
