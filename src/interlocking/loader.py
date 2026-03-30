@@ -1,3 +1,9 @@
+# src/interlocking/loader.py
+"""
+Загрузка конфигурации станции из YAML.
+Единственная точка входа для блока ЭЦ: читает файл,
+собирает StationConfig, не выполняет проверку враждебности маршрутов.
+"""
 from __future__ import annotations
 
 import logging
@@ -50,15 +56,22 @@ def load_station(path: Path | str) -> StationConfig:
     raw = _read_yaml(path)
 
     try:
-        station_id: str = raw["station_id"]
-    except KeyError:
-        raise StationConfigError(
-            f"Отсутствует обязательное поле 'station_id' в файле {path}"
-        )
+        station_id = str(raw["station_id"])
+        name       = str(raw["name"])
+        switches   = _parse_switches(raw)
+        routes     = _parse_routes(raw, switches)
+        extra      = _parse_extra_conflicts(raw, routes)
 
-    try:
-        name: str = raw["name"]
-    except KeyError:
+        station = StationConfig(
+            station_id      = station_id,
+            name            = name,
+            routes          = routes,
+            switches        = switches,
+            extra_conflicts = extra,
+        )
+    except (StationConfigError, ConfigError):
+        raise
+    except (KeyError, TypeError, ValueError) as exc:
         raise StationConfigError(
             f"Отсутствует обязательное поле 'name' в файле {path}"
         )
@@ -76,19 +89,14 @@ def load_station(path: Path | str) -> StationConfig:
     )
 
     logger.info(
-        "Конфигурация станции '%s' (%s) загружена из %s",
-        name,
-        station_id,
-        path,
+        "Станция загружена: id=%s, маршрутов=%d, стрелок=%d, "
+        "доп. конфликтов=%d",
+        station.station_id,
+        len(station.routes),
+        len(station.switches),
+        len(station.extra_conflicts),
     )
-
-    return StationConfig(
-        station_id=station_id,
-        name=name,
-        switches=switches,
-        routes=routes,
-        extra_conflicts=extra_conflicts,
-    )
+    return station
 
 
 # ---------------------------------------------------------------------------
@@ -155,10 +163,11 @@ def _parse_switches(
                 f"Допустимые значения: {valid} ({path})"
             )
 
-        transfer_time_s: float = item.get("transfer_time_s", 4.0)
-        if not isinstance(transfer_time_s, (int, float)):
+        transfer_time: float = float(item.get("transfer_time_s", 4.0))
+        if transfer_time <= 0:
             raise StationConfigError(
-                f"Стрелка '{switch_id}': transfer_time_s должно быть числом ({path})"
+                f"switches[{i}] (id={switch_id!r}): "
+                f"transfer_time_s должен быть > 0, получено {transfer_time}."
             )
         transfer_time_s = float(transfer_time_s)
         if not (math.isfinite(transfer_time_s) and transfer_time_s > 0):
@@ -173,7 +182,6 @@ def _parse_switches(
             transfer_time_s=transfer_time_s,
         )
 
-    logger.debug("Разобрано %d стрелок", len(switches))
     return switches
 
 
@@ -203,18 +211,17 @@ def _parse_routes(
                 f"Дублирующийся route_id '{route_id}' в файле {path}"
             )
 
-        raw_type = item.get("route_type")
         try:
-            route_type = RouteType(raw_type)
-        except ValueError:
-            valid = [t.value for t in RouteType]
+            name = str(item["name"])
+        except KeyError as exc:
             raise StationConfigError(
-                f"Маршрут '{route_id}': неизвестный тип '{raw_type}'. "
-                f"Допустимые значения: {valid} ({path})"
-            )
+                f"routes[{i}] (id={route_id!r}): отсутствует поле 'name'."
+            ) from exc
 
-        sections: list[str] = item.get("sections") or []
-        if not sections:
+        try:
+            route_type = RouteType(item["route_type"])
+        except (KeyError, ValueError) as exc:
+            valid = [rt.value for rt in RouteType]
             raise StationConfigError(
                 f"Маршрут '{route_id}': список секций не может быть пустым ({path})"
             )
@@ -225,13 +232,13 @@ def _parse_routes(
                 f"Маршрут '{route_id}': дублирующиеся секции: "
                 f"{sorted(set(dup_sections))} ({path})"
             )
+        sections: list[str] = [str(s) for s in sections_raw]
 
-        raw_vlimit = item.get("v_limit", 60.0)
-        v_limit = float(raw_vlimit)
-        if not (math.isfinite(v_limit) and v_limit > 0):
+        v_limit: float = float(item.get("v_limit", 60.0))
+        if v_limit <= 0:
             raise StationConfigError(
-                f"Маршрут '{route_id}': v_limit должно быть конечным "
-                f"положительным числом, получено {v_limit} ({path})"
+                f"routes[{i}] (id={route_id!r}): "
+                f"v_limit должен быть > 0, получено {v_limit}."
             )
 
         route_switches = _parse_route_switches(
@@ -252,8 +259,21 @@ def _parse_routes(
             v_limit=v_limit,
         )
 
-    logger.debug("Разобрано %d маршрутов", len(routes))
     return routes
+
+
+def _check_unique_sections(sections: list[str], route_id: str) -> None:
+    """Проверяет отсутствие дублирующихся секций в маршруте."""
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for sec in sections:
+        if sec in seen:
+            duplicates.append(sec)
+        seen.add(sec)
+    if duplicates:
+        raise StationConfigError(
+            f"routes[id={route_id!r}]: дублирующиеся секции: {duplicates}."
+        )
 
 
 def _parse_route_switches(
@@ -293,54 +313,58 @@ def _parse_extra_conflicts(
     known_routes: set[str],
     path: Path,
 ) -> list[tuple[str, str]]:
-    """Разбирает секцию 'extra_conflicts'.
+    """
+    Разбирает необязательный список явно заданных дополнительных конфликтов.
+    Каждый элемент — пара [route_a, route_b].
+    Проверяет, что оба маршрута объявлены в known_routes.
 
-    Каждый элемент — пара [route_a, route_b]. Запрещены:
-    - self-conflict (route_a == route_b)
-    - дублирующиеся пары (A,B) и (B,A)
-    - ссылки на несуществующие маршруты
-
-    Raises:
-        StationConfigError: при любом нарушении выше.
+    Если ключ 'extra_conflicts' отсутствует — возвращает пустой список.
     """
     raw_conflicts = raw.get("extra_conflicts")
     if not raw_conflicts:
         return []
+    if not isinstance(items, list):
+        raise StationConfigError(
+            "Поле 'extra_conflicts' должно быть списком пар маршрутов."
+        )
 
-    conflicts: list[tuple[str, str]] = []
-    seen: set[frozenset[str]] = set()
-
-    for idx, item in enumerate(raw_conflicts):
-        if not isinstance(item, (list, tuple)) or len(item) != 2:
-            raise StationConfigError(
-                f"extra_conflicts[{idx}]: ожидается пара [route_a, route_b], "
-                f"получено {item!r} ({path})"
-            )
-
-        route_a, route_b = str(item[0]), str(item[1])
-
-        if route_a == route_b:
+    result: list[tuple[str, str]] = []
+    for i, pair in enumerate(items):
+        if not isinstance(pair, list) or len(pair) != 2:
             raise StationConfigError(
                 f"extra_conflicts[{idx}]: маршрут '{route_a}' не может "
                 f"конфликтовать сам с собой ({path})"
             )
 
-        for r in (route_a, route_b):
-            if r not in known_routes:
+        for rid in (route_a, route_b):
+            if rid not in known_routes:
                 raise StationConfigError(
                     f"extra_conflicts[{idx}]: ссылка на неизвестный маршрут "
                     f"'{r}' ({path})"
                 )
 
-        key = frozenset({route_a, route_b})
-        if key in seen:
-            raise StationConfigError(
-                f"extra_conflicts[{idx}]: дублирующийся конфликт "
-                f"({route_a!r}, {route_b!r}) — пара уже объявлена ({path})"
-            )
-        seen.add(key)
+        result.append((route_a, route_b))
 
-        conflicts.append((route_a, route_b))
+    return result
 
-    logger.debug("Разобрано %d дополнительных конфликтов", len(conflicts))
-    return conflicts
+
+# ---------------------------------------------------------------------------
+# Утилиты
+# ---------------------------------------------------------------------------
+
+def _read_yaml(path: Path) -> dict[str, Any]:
+    """Читает YAML-файл, возвращает словарь. Бросает StationConfigError при ошибке."""
+    if not path.exists():
+        raise StationConfigError(f"Файл не найден: {path}")
+    try:
+        with path.open(encoding="utf-8") as fh:
+            data = yaml.safe_load(fh)
+    except yaml.YAMLError as exc:
+        raise StationConfigError(
+            f"Ошибка парсинга YAML '{path}': {exc}"
+        ) from exc
+    if not isinstance(data, dict):
+        raise StationConfigError(
+            f"Корень YAML должен быть словарём: {path}"
+        )
+    return data
