@@ -6,6 +6,14 @@
 """
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Позволяет напрямую запускать этот файл как скрипт из IDE (без флага -m)
+_root_dir = str(Path(__file__).resolve().parent.parent.parent)
+if _root_dir not in sys.path:
+    sys.path.insert(0, _root_dir)
+
 import bisect
 import logging
 import time

@@ -194,6 +194,53 @@ class RouteConflictResult:
     reason: ConflictReason
 
 
+class RouteStatus(Enum):
+    """Статус маршрута в движке."""
+
+    CLOSED = "CLOSED"       # маршрут не открыт
+    REQUESTED = "REQUESTED" # запрос принят, стрелки ещё переводятся
+    OPEN = "OPEN"           # маршрут открыт, движение разрешено
+    CANCELLING = "CANCELLING" # отмена в процессе
+
+
+class SwitchState(Enum):
+    """Текущее фактическое положение стрелки."""
+
+    NORMAL = "NORMAL"       # нормальное положение
+    REVERSE = "REVERSE"     # переведена
+    MOVING = "MOVING"       # в процессе перевода
+    LOCKED = "LOCKED"       # заперта (входит в активный маршрут)
+    FAULT = "FAULT"         # неисправность
+
+
+@dataclass
+class EngineState:
+    """Снимок текущего состояния всех объектов станции.
+
+    Возвращается методом :meth:`InterlockingEngine.get_state`.
+    Объект иммутабелен — изменения состояния отражаются только
+    в следующем вызове ``get_state()``.
+    """
+
+    switch_states: dict[str, SwitchState] = field(default_factory=dict)
+    route_statuses: dict[str, RouteStatus] = field(default_factory=dict)
+    active_routes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class RouteRequest:
+    """Запрос на открытие маршрута.
+
+    Args:
+        route_id: идентификатор маршрута из конфигурации станции.
+        priority: приоритет запроса (выше — важнее при коллизиях).
+            По умолчанию 0.
+    """
+
+    route_id: str
+    priority: int = 0
+
+
 # ---------------------------------------------------------------------------
 # СИМУЛЯЦИЯ — simulation.py / SimPy
 # ---------------------------------------------------------------------------
