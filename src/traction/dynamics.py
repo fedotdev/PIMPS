@@ -1,4 +1,3 @@
-# src/traction/dynamics.py
 """
 Интегрирование уравнения движения поезда по ПТР РЖД 2016.
 
@@ -222,12 +221,14 @@ def _ode(
         dv/dt = (Fk − W − Bt) / (M · (1 + γ))
 
     Где:
-        Fk — сила тяги, кН      (0 при выбеге и торможении)
+        Fk — сила тяги, кН      (0 при выбеге, торможении или v > v_limit секции)
         W  — полное сопротивление, кН
         Bt — тормозная сила, кН (0 при тяге и выбеге)
         M  — масса состава, т   (1 кН/т = 1 м/с²)
         γ  = 0,06 — коэффициент инерции вращающихся масс (§1.1)
 
+    Ограничитель скорости секции: при v > section.v_limit тяга снимается,
+    поезд движётся выбегом до достижения допустимой скорости.
     ds/dt = v_ms.
     """
     v_ms  = max(y[0], 0.0)  # защита от численного ухода в отрицательные скорости
@@ -236,13 +237,17 @@ def _ode(
 
     section = _current_section(s_m, sections, s_ends)
 
-    fk = _fk_kn(v_kmh, train)      if mode == "traction" else 0.0
-    bt = _bt_full_kn(v_kmh, train) if mode == "braking"  else 0.0
+    # Тяга снимается при выбеге/торможении или при превышении v_limit секции.
+    # Физически это соответствует выключению тяги машинистом при входе
+    # на ограничение — поезд идёт выбегом и тормозит естественным сопротивлением.
+    over_limit = v_kmh > section.v_limit
+    fk = (
+        _fk_kn(v_kmh, train)
+        if mode == "traction" and not over_limit
+        else 0.0
+    )
+    bt = _bt_full_kn(v_kmh, train) if mode == "braking" else 0.0
     w  = _w_full_kn(v_kmh, train, section)
-
-    # TODO: ограничитель скорости секции — реализовать при добавлении
-    # RouteSection.v_limit в модель данных; пока Fk обнуляется выше v_max
-    # локомотива через _fk_kn.
 
     m_eff = train.train_mass_t * (1.0 + _GAMMA_FREIGHT)  # т (эффективная масса)
 
@@ -254,8 +259,6 @@ def _ode(
 
 def _make_events(
     sections: list[RouteSection],
-    v_limit_ms: float,  # TODO: ограничитель скорости секции — реализовать при добавлении
-                        # RouteSection.v_limit в модель данных
 ) -> list[Callable]:
     """
     Формирует список терминальных событий для solve_ivp.
@@ -310,9 +313,8 @@ def solve_route(
     """
     _validate_sections(sections)
 
-    v_limit_ms   = train.loco.v_max * _KMH_TO_MS
     y0           = [v0_kmh * _KMH_TO_MS, sections[0].s_start]
-    events       = _make_events(sections, v_limit_ms)
+    events       = _make_events(sections)
 
     # Предрассчитываем s_ends один раз, чтобы не аллоцировать список
     # на каждом шаге ODE (_current_section вызывается тысячи раз).
