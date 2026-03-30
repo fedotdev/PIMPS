@@ -92,8 +92,8 @@ def _wo_wagons_kn(v_kmh: float, train: TrainConfig) -> float:
         wo' = a + (b + c·v + d·v²) / q0
 
     Коэффициенты a, b, c, d зависят от типа вагона (wagon_type) и нагрузки:
-        q0 >= 6 т/ось — гружёный ("heavy"),
-        q0  < 6 т/ось — порожний ("light").
+        q0 >= 6 т/ось — гружёный (\"heavy\"),
+        q0  < 6 т/ось — порожний (\"light\").
 
     Поддерживаемые wagon_type: 4, 6, 8 (по числу осей).
     """
@@ -113,14 +113,14 @@ def _wi_kn(grade_per_mill: float, train_mass_t: float) -> float:
     Сила сопротивления от уклона Wi, кН.
 
     ПТР РЖД 2016, §1.2.6, формула 67:
-        wi = 9,81 · i  [Н/кН],
-        Wi = wi · (P + Q) / 1000  [кН].
+        wi = i  [Н/кН]  (i — уклон в ‰, g в формулу не входит)
+        Wi = wi · (P + Q) / 1000  [кН]
 
     Знак Wi совпадает со знаком уклона i:
         i > 0 — подъём (сопротивление),
         i < 0 — спуск (ускоряющая сила, добавляется со знаком минус).
     """
-    return grade_per_mill * _G * train_mass_t / 1000.0
+    return grade_per_mill * train_mass_t / 1000.0
 
 
 def _wr_kn(radius_m: float, train_mass_t: float) -> float:
@@ -128,14 +128,14 @@ def _wr_kn(radius_m: float, train_mass_t: float) -> float:
     Сила сопротивления от кривой Wr, кН.
 
     ПТР РЖД 2016, §1.2.7, формула 68:
-        wr = 6870 / R  [Н/кН]  (в упрощённой форме: 700/R при g≈9,81).
-        Wr = wr · (P + Q) / 1000  [кН].
+        wr = 700 / R  [Н/кН]  (коэффициент 700 уже включает g)
+        Wr = wr · (P + Q) / 1000  [кН]
 
     При radius_m == 0 или None (прямой путь) возвращает 0.
     """
     if not radius_m:
         return 0.0
-    return (700.0 / radius_m) * _G * train_mass_t / 1000.0
+    return (700.0 / radius_m) * train_mass_t / 1000.0
 
 
 def _w_full_kn(
@@ -149,17 +149,17 @@ def _w_full_kn(
     W = Wox + Wo_wagons + Wi + Wr.
 
     Пересчёт удельных сопротивлений (Н/кН) в абсолютные силы (кН):
-        Wox      = wox · P · g / 1000
-        Wo_wagon = wo' · Q · g / 1000
-        Wi       = 9,81 · i · (P+Q) / 1000   (формула 67)
-        Wr       = (700/R) · 9,81 · (P+Q) / 1000  (формула 68)
+        Wox      = wox · P / 1000
+        Wo_wagon = wo' · Q / 1000
+        Wi       = i · (P+Q) / 1000         (формула 67)
+        Wr       = (700/R) · (P+Q) / 1000   (формула 68)
 
     Где P — масса локомотива (т), Q — масса вагонов (т).
     """
     wagon_mass_total_t = train.num_wagons * train.wagon_mass_t
 
-    wox  = _wox_kn(v_kmh, train)       * train.loco.mass_t      * _G / 1000.0
-    wo_w = _wo_wagons_kn(v_kmh, train) * wagon_mass_total_t      * _G / 1000.0
+    wox  = _wox_kn(v_kmh, train)       * train.loco.mass_t      / 1000.0
+    wo_w = _wo_wagons_kn(v_kmh, train) * wagon_mass_total_t      / 1000.0
     wi   = _wi_kn(section.grade,  train.train_mass_t)
     wr   = _wr_kn(section.radius, train.train_mass_t)
     return wox + wo_w + wi + wr
@@ -172,6 +172,9 @@ def _bt_full_kn(v_kmh: float, train: TrainConfig) -> float:
     Интерполирует bt_table по текущей скорости.
     При v <= 0 поезд уже стоит — тормозная сила равна нулю.
     ПТР РЖД 2016, §2.2.
+
+    ВНИМАНИЕ: учитывается только тормозная сила локомотива.
+    Тормозная сила вагонов (ПТР РЖД 2016, §2.2) не реализована — TODO.
     """
     if v_kmh <= 0.0:
         return 0.0
@@ -192,14 +195,20 @@ def _current_section(
 
     Поиск через bisect_right по предрассчитанному списку s_ends — O(log n).
     Граничные случаи:
-        s_m <  sections[0].s_start → возвращает sections[0],
-        s_m >= sections[-1].s_end  → возвращает sections[-1].
+        s_m <  sections[0].s_start → WARNING + возвращает sections[0],
+        s_m >= sections[-1].s_end  → WARNING (если вышел за конец) + sections[-1].
 
     Параметр s_ends передаётся из solve_route (предрассчитан один раз),
     чтобы избежать аллокации на каждом шаге ODE.
     """
+    if s_m < sections[0].s_start:
+        logger.warning("_current_section: s=%.2f вне маршрута (до начала)", s_m)
+        return sections[0]
     idx = bisect.bisect_right(s_ends, s_m)
-    idx = min(idx, len(sections) - 1)
+    if idx >= len(sections):
+        if s_m > s_ends[-1]:
+            logger.warning("_current_section: s=%.2f вне маршрута (после конца)", s_m)
+        return sections[-1]
     return sections[idx]
 
 
@@ -355,14 +364,15 @@ def solve_route(
 
     # Профиль задержки хвоста относительно головы
     ht_profile = head_to_tail_profile(
+        # временный объект только для удобства сигнатуры
         PhysicsResult(
-            consist_id     = consist_id,
-            route_id       = route_id,
-            t_total_s      = t_total_s,
-            v_profile      = v_profile,
-            t_profile      = t_profile,
-            s_points       = s_points,
-            head_to_tail_s = np.zeros_like(s_points),  # заглушка для рекурсии
+            consist_id=consist_id,
+            route_id=route_id,
+            t_total_s=t_total_s,
+            v_profile=v_profile,
+            t_profile=t_profile,
+            s_points=s_points,
+            head_to_tail_s=np.zeros(0),  # пустой массив вместо zeros_like
         ),
         train.train_length_m,
     )
