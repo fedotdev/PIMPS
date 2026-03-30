@@ -77,6 +77,18 @@ def load_locomotive(path: Path | str) -> LocomotiveConfig:
         "тяговых точек=%d",
         loco.loco_id, loco.mass_t, loco.v_max, len(loco.v_table),
     )
+
+    if loco.v_max > float(loco.v_table[-1]):
+        logger.warning(
+            "Локомотив '%s': v_max=%.1f км/ч превышает правую границу "
+            "тяговой характеристики v_table[-1]=%.1f км/ч. "
+            "При v > %.1f км/ч Fk будет равна последнему табличному значению.",
+            loco.loco_id,
+            loco.v_max,
+            float(loco.v_table[-1]),
+            float(loco.v_table[-1]),
+        )
+
     return loco
 
 
@@ -213,6 +225,15 @@ def _parse_resistance_curve(
             float(np.min(wox_table)),
         )
 
+        if float(v_table[0]) > 0.0:
+            logger.warning(
+                "Тяговая характеристика начинается с v=%.1f км/ч > 0; "
+                "сопротивление движения при меньших скоростях равно граничному "
+                "значению wox=%.4f Н/кН.",
+                float(v_table[0]),
+                float(wox_table[0]),
+            )
+
     return wox_table
 
 
@@ -329,8 +350,10 @@ def _curve_to_arrays(
     x_arr = np.array([p[0] for p in pairs], dtype=float)
     y_arr = np.array([p[1] for p in pairs], dtype=float)
 
-    if len(np.unique(x_arr)) != len(x_arr):
+    if np.any(y_arr < 0):
         raise LocomotiveConfigError(
-            f"В '{field_name}' есть дублирующиеся значения '{x_key}'."
+            f"'{field_name}': поле '{y_key}' содержит отрицательные значения — "
+            f"физически недопустимо."
         )
+
     return x_arr, y_arr
