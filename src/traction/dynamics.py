@@ -265,10 +265,7 @@ def _ode(
     return [dv_dt, ds_dt]
 
 
-def _make_events(
-    sections: list[RouteSection],
-    v_limit_ms: float,
-) -> list[Callable]:
+def _make_events(sections: list[RouteSection]) -> list[Callable]:
     """
     Формирует список терминальных событий для solve_ivp.
 
@@ -277,12 +274,9 @@ def _make_events(
 
     Оба события терминальные (terminal=True), интегрирование прекращается.
 
-    Параметр v_limit_ms передаётся из solve_route и соответствует
-    конструкционной скорости локомотива (train.loco.v_max * KMH_TO_MS).
     Ограничения скорости секций реализованы непосредственно в _ode
-    через RouteSection.v_limit — добавлять терминальное событие
-    не требуется, так как обнуление Fk достаточно для контроля скорости
-    в рамках задач ВКР (точность до долей секунды).
+    через RouteSection.v_limit — отдельное терминальное событие не нужно:
+    обнуление Fk достаточно для контроля скорости в задачах ВКР.
     """
     s_route_end = sections[-1].s_end
 
@@ -329,9 +323,8 @@ def solve_route(
     """
     _validate_sections(sections)
 
-    v_limit_ms   = train.loco.v_max * _KMH_TO_MS
-    y0           = [v0_kmh * _KMH_TO_MS, sections[0].s_start]
-    events       = _make_events(sections, v_limit_ms)
+    y0     = [v0_kmh * _KMH_TO_MS, sections[0].s_start]
+    events = _make_events(sections)
 
     # Предрассчитываем s_ends один раз, чтобы не аллоцировать список
     # на каждом шаге ODE (_current_section вызывается тысячи раз).
