@@ -1,4 +1,3 @@
-# src/traction/dynamics.py
 """
 Интегрирование уравнения движения поезда по ПТР РЖД 2016.
 
@@ -222,13 +221,18 @@ def _ode(
         dv/dt = (Fk − W − Bt) / (M · (1 + γ))
 
     Где:
-        Fk — сила тяги, кН      (0 при выбеге и торможении)
+        Fk — сила тяги, кН      (0 при выбеге и торможении, а также при v >= v_limit)
         W  — полное сопротивление, кН
         Bt — тормозная сила, кН (0 при тяге и выбеге)
         M  — масса состава, т   (1 кН/т = 1 м/с²)
         γ  = 0,06 — коэффициент инерции вращающихся масс (§1.1)
 
     ds/dt = v_ms.
+
+    Ограничение скорости секции:
+        Если v_kmh >= section.v_limit — тяга обнуляется.
+        Поезд выкатывается выбегом до v < v_limit, после чего тяга возобновляется.
+        Это имитирует работу САУТ/КЛУБ без явного регулятора скорости.
     """
     v_ms  = max(y[0], 0.0)  # защита от численного ухода в отрицательные скорости
     s_m   = y[1]
@@ -236,13 +240,13 @@ def _ode(
 
     section = _current_section(s_m, sections, s_ends)
 
-    fk = _fk_kn(v_kmh, train)      if mode == "traction" else 0.0
+    # Ограничитель скорости секции: обнуляем тягу, если скорость достигла v_limit.
+    # Поле v_limit присутствует в RouteSection (models.py, дефолт 120 км/ч).
+    over_limit = (mode == "traction") and (v_kmh >= section.v_limit)
+
+    fk = _fk_kn(v_kmh, train) if (mode == "traction" and not over_limit) else 0.0
     bt = _bt_full_kn(v_kmh, train) if mode == "braking"  else 0.0
     w  = _w_full_kn(v_kmh, train, section)
-
-    # TODO: ограничитель скорости секции — реализовать при добавлении
-    # RouteSection.v_limit в модель данных; пока Fk обнуляется выше v_max
-    # локомотива через _fk_kn.
 
     m_eff = train.train_mass_t * (1.0 + _GAMMA_FREIGHT)  # т (эффективная масса)
 
@@ -254,8 +258,7 @@ def _ode(
 
 def _make_events(
     sections: list[RouteSection],
-    v_limit_ms: float,  # TODO: ограничитель скорости секции — реализовать при добавлении
-                        # RouteSection.v_limit в модель данных
+    v_limit_ms: float,
 ) -> list[Callable]:
     """
     Формирует список терминальных событий для solve_ivp.
@@ -264,6 +267,13 @@ def _make_events(
     Событие 2 — остановка:      v <= 0.
 
     Оба события терминальные (terminal=True), интегрирование прекращается.
+
+    Параметр v_limit_ms передаётся из solve_route и соответствует
+    конструкционной скорости локомотива (train.loco.v_max * KMH_TO_MS).
+    Ограничения скорости секций реализованы непосредственно в _ode
+    через RouteSection.v_limit — добавлять терминальное событие
+    не требуется, так как обнуление Fk достаточно для контроля скорости
+    в рамках задач ВКР (точность до долей секунды).
     """
     s_route_end = sections[-1].s_end
 
