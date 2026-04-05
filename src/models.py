@@ -283,3 +283,19 @@ class SimResult:
     t_wait_s: float                   # ожидание ресурса (горловина), с
     t_dwell_s: float                  # стоянка, с
     t_total_s: float                  # полное время от входа до выхода, с
+
+
+@dataclass
+class ScenarioEntry:
+    """Один поезд в сценарии симуляции.
+
+    Описывает: когда поезд прибывает, какой состав, по какому маршруту
+    и через какие физические секции движется.
+    """
+    train_id: str
+    t_arrive_s: float                 # момент появления поезда в симуляции, с
+    route_id: str                     # маршрут в StationConfig
+    train: TrainConfig                # состав (локомотив + вагоны)
+    sections: list[RouteSection]      # физические секции для тягового расчёта
+    v0_kmh: float = 0.0              # начальная скорость, км/ч
+    dwell_s: float = 0.0             # время стоянки на станции, с

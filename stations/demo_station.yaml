@@ -1,0 +1,22 @@
+station_id: DEMO
+name: Демонстрационная станция
+switches:
+  - switch_id: SW1
+    normal_position: plus
+    transfer_time_s: 4.0
+routes:
+  - route_id: MAIN_PASS
+    name: Пропуск по главному пути
+    route_type: passthrough
+    v_limit: 80.0
+    switches:
+      SW1: plus
+    sections: ["TRK_1"]
+
+  - route_id: SIDE_ARRIVAL
+    name: Приём на боковой путь
+    route_type: arrival
+    v_limit: 40.0
+    switches:
+      SW1: minus
+    sections: ["TRK_2"]
