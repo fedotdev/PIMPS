@@ -36,6 +36,29 @@ class ConflictReason(str, Enum):
     OK         = "ok"
 
 
+class EventType(str, Enum):
+    """Типы событий для логирования работы станции."""
+    ARRIVED = "arrived_at_station"
+    ROUTE_REQUESTED = "route_requested"
+    ROUTE_ACQUIRED = "route_acquired"
+    DEPARTED = "departed_station"
+    ROUTE_RELEASED = "route_released"
+
+
+class ControlMode(str, Enum):
+    """Режим СИРДП (Control mode): АБ или ВС."""
+    AB = "AB"   # автоблокировка (фиксированные интервалы)
+    VC = "VC"   # виртуальная сцепка (сокращённые интервалы)
+
+    @property
+    def label_ru(self) -> str:
+        """Человекочитаемое название для отчёта."""
+        return {
+            "AB": "Автоблокировка (АБ)",
+            "VC": "Виртуальная сцепка (ВС)",
+        }[self.value]
+
+
 # ---------------------------------------------------------------------------
 # ТЯГА — traction/loader.py → traction/engine.py → traction/dynamics.py
 # ---------------------------------------------------------------------------
@@ -272,17 +295,34 @@ class TrainState:
 
 
 @dataclass
+class StationEvent:
+    """Одно событие по поезду на станции в ходе симуляции."""
+    train_id: str
+    event_type: EventType
+    route_id: str
+    section_id: str                   # Может быть пустым, если событие на уровне маршрута
+    t_event_s: float
+
+
+@dataclass
 class SimResult:
     """Итоговая запись по одному поезду за одну симуляцию."""
     train_id: str
     route_id: str
     consist_id: str
-    scenario: str                     # "S1_base" | "S2_vc"
-    t_arrive_s: float                 # время прибытия на станцию, с
-    t_depart_s: float                 # время отправления, с
+    scenario: str                     # "Demo-AB" | "Demo-VC"
+    t_arrive_s: float                 # время прибытия на станцию фактически, с
+    t_depart_s: float                 # время отправления фактически, с
     t_wait_s: float                   # ожидание ресурса (горловина), с
-    t_dwell_s: float                  # стоянка, с
+    t_dwell_s: float                  # стоянка фактическая, с
     t_total_s: float                  # полное время от входа до выхода, с
+    control_mode: str = "AB"          # режим СИРДП: "AB" | "VC"
+    t_planned_arrive_s: float = 0.0   # плановое время прибытия
+    t_planned_depart_s: float = 0.0   # плановое время отправления
+    delay_arrive_s: float = 0.0       # задержка по прибытию
+    delay_depart_s: float = 0.0       # задержка по отправлению
+    v_avg_kmh: float = 0.0            # средняя скорость по маршруту (из профиля тяги)
+    v_max_kmh: float = 0.0            # максимальная скорость по маршруту (из профиля тяги)
 
 
 @dataclass
@@ -299,3 +339,10 @@ class ScenarioEntry:
     sections: list[RouteSection]      # физические секции для тягового расчёта
     v0_kmh: float = 0.0              # начальная скорость, км/ч
     dwell_s: float = 0.0             # время стоянки на станции, с
+    
+    @property
+    def planned_depart_s(self) -> float:
+        """Плановое время отправления без учета задержек (но без учета времени хода, так как оно неизвестно до расчёта, 
+        считаем как прибытие + стоянка, хотя точнее было бы считать с учетом времени следования до места стоянки).
+        Пока принимаем t_arrive_s + dwell_s как базовую метрику для отправления, чтобы считать задержку относительно нее."""
+        return self.t_arrive_s + self.dwell_s

@@ -7,18 +7,18 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from src.models import PhysicsResult
+from src.models import PhysicsResult, StationEvent
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["plot_physics_profile"]
+__all__ = ["plot_physics_profile", "plot_station_occupancy", "plot_throughput_comparison"]
 
 
 def _ensure_dir(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
-def plot_physics_profile(physics: PhysicsResult, out_path: Path | str) -> None:
+def plot_physics_profile(physics: PhysicsResult, train_id: str, out_path: Path | str) -> None:
     """Генерирует график скорости v(s) и времени t(s) по дистанции."""
     if len(physics.s_points) == 0:
         logger.warning("Нет точек для отрисовки профиля маршрута %s", physics.route_id)
@@ -46,7 +46,7 @@ def plot_physics_profile(physics: PhysicsResult, out_path: Path | str) -> None:
     ax2.tick_params(axis='y', labelcolor=color_t)
 
     # Добавляем общий заголовок и легенду
-    plt.title(f"Поезд: {physics.consist_id} | Маршрут: {physics.route_id}\nВремя: {physics.t_total_s:.1f} с", pad=15)
+    plt.title(f"Поезд: {train_id} | Маршрут: {physics.route_id}\nВремя: {physics.t_total_s:.1f} с", pad=15)
     
     # Объединяем легенды с двух осей
     lines1, labels1 = ax1.get_legend_handles_labels()
@@ -60,3 +60,112 @@ def plot_physics_profile(physics: PhysicsResult, out_path: Path | str) -> None:
     plt.close(fig)
     
     logger.info("Профиль сохранен: %s", path.absolute())
+
+
+def plot_station_occupancy(events: list[StationEvent], scenario_name: str, out_path: Path | str) -> None:
+    """Строит диаграмму Ганта (занятость маршрутов по времени)."""
+    if not events:
+        logger.warning("Нет событий для отрисовки диаграммы Ганта.")
+        return
+        
+    path = Path(out_path)
+    _ensure_dir(path)
+    
+    occupancies: list[dict] = []
+    acquired = {}
+    
+    # Сортируем события по времени
+    sorted_events = sorted(events, key=lambda x: x.t_event_s)
+    
+    for e in sorted_events:
+        if e.event_type.value == "route_acquired":
+            acquired[(e.train_id, e.route_id)] = e.t_event_s
+        elif e.event_type.value == "route_released":
+            key = (e.train_id, e.route_id)
+            if key in acquired:
+                start_time = acquired.pop(key)
+                duration = e.t_event_s - start_time
+                occupancies.append({
+                    "train_id": e.train_id,
+                    "route_id": e.route_id,
+                    "start": start_time,
+                    "duration": duration
+                })
+                
+    if not occupancies:
+        logger.warning("Нет интервалов занятости для графика Ганта.")
+        return
+        
+    routes = list(set(o["route_id"] for o in occupancies))
+    routes.sort()
+    
+    fig, ax = plt.subplots(figsize=(12, max(4, len(routes) * 0.8)))
+    colors = plt.cm.tab20.colors
+    
+    for i, route in enumerate(routes):
+        route_occs = [o for o in occupancies if o["route_id"] == route]
+        for occ in route_occs:
+            # Выберем цвет стабильный относительно имени поезда
+            color = colors[hash(occ["train_id"]) % len(colors)]
+            ax.broken_barh(
+                [(occ["start"], occ["duration"])], 
+                (i - 0.4, 0.8), 
+                facecolors=color, 
+                alpha=0.8, 
+                edgecolor='black'
+            )
+            
+            # Подпись внутри/рядом с блоком
+            text_x = occ["start"] + occ["duration"] / 2
+            # Если блок слишком узкий, поворачиваем текст
+            rotation = 90 if occ["duration"] < 50 else 0
+            ax.text(
+                text_x, i, occ["train_id"], 
+                ha='center', va='center', rotation=rotation, fontsize=8
+            )
+            
+    ax.set_yticks(range(len(routes)))
+    ax.set_yticklabels(routes)
+    ax.set_xlabel("Время, с")
+    ax.set_ylabel("Маршруты")
+    ax.set_title(f"Диаграмма занятости маршрутов (Сценарий: {scenario_name})")
+    ax.grid(True, axis='x', linestyle='--', alpha=0.6)
+    
+    fig.tight_layout()
+    plt.savefig(path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    logger.info("Диаграмма занятости сохранена: %s", path.absolute())
+
+
+def plot_throughput_comparison(scenario_metrics: dict[str, dict[str, float]], out_path: Path | str) -> None:
+    """Строит столбчатую диаграмму сравнения пропускной способности сценариев."""
+    if not scenario_metrics:
+        return
+        
+    path = Path(out_path)
+    _ensure_dir(path)
+    
+    scenarios = list(scenario_metrics.keys())
+    throughput = [scenario_metrics[s].get("throughput_trains_per_hour", 0.0) for s in scenarios]
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    bars = ax.bar(scenarios, throughput, color='tab:green', alpha=0.8, edgecolor='black')
+    
+    ax.set_ylabel("Пропускная способность, поездов/час")
+    ax.set_title("Сравнение пропускной способности по сценариям")
+    ax.grid(True, axis='y', linestyle='--', alpha=0.6)
+    
+    for bar in bars:
+        height = bar.get_height()
+        ax.annotate(
+            f'{height:.2f}',
+            xy=(bar.get_x() + bar.get_width() / 2, height),
+            xytext=(0, 3),  
+            textcoords="offset points",
+            ha='center', va='bottom', fontsize=10, fontweight='bold'
+        )
+                    
+    fig.tight_layout()
+    plt.savefig(path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    logger.info("График сравнения сценариев сохранён: %s", path.absolute())

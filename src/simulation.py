@@ -10,7 +10,13 @@ from src.interlocking.engine import (
     RouteConflictError,
     SwitchOccupiedError,
 )
-from src.models import RouteRequest, ScenarioEntry, SimResult
+from src.models import (
+    RouteRequest, 
+    ScenarioEntry, 
+    SimResult, 
+    StationEvent, 
+    EventType
+)
 from src.traction.dynamics import TractionCache
 
 logger = logging.getLogger(__name__)
@@ -30,6 +36,7 @@ class SimulationEngine:
         interlocking: InterlockingEngine,
         traction_cache: TractionCache,
         scenario_name: str = "default",
+        control_mode: str = "AB",
         retry_interval_s: float = 30.0,
     ) -> None:
         """
@@ -37,14 +44,17 @@ class SimulationEngine:
             interlocking: Движок ЭЦ для управления маршрутами
             traction_cache: Кэш тяговых расчётов
             scenario_name: Имя сценария (для сохранения в SimResult)
+            control_mode: Режим СИРДП ("AB" или "VC")
             retry_interval_s: Интервал повторного запроса маршрута (в сек)
         """
         self.env = simpy.Environment()
         self.interlocking = interlocking
         self.traction_cache = traction_cache
         self.scenario_name = scenario_name
+        self.control_mode = control_mode
         self.retry_interval_s = retry_interval_s
         self.results: list[SimResult] = []
+        self.events: list[StationEvent] = []
 
     def load_scenario(self, entries: list[ScenarioEntry]) -> None:
         """Загружает расписание. Для каждого поезда создаёт SimPy-процесс."""
@@ -64,6 +74,9 @@ class SimulationEngine:
         if entry.t_arrive_s > self.env.now:
             yield self.env.timeout(entry.t_arrive_s - self.env.now)
 
+        t_real_arrive_s = self.env.now
+        self.events.append(StationEvent(entry.train_id, EventType.ARRIVED, entry.route_id, "", t_real_arrive_s))
+
         logger.info(
             "[%7.1f] Поезд %s прибыл. Запрос маршрута '%s'",
             self.env.now,
@@ -72,11 +85,13 @@ class SimulationEngine:
         )
 
         t_wait_start = self.env.now
+        self.events.append(StationEvent(entry.train_id, EventType.ROUTE_REQUESTED, entry.route_id, "", self.env.now))
 
         # 2. Поезд пытается захватить маршрут
         while True:
             try:
                 self.interlocking.request_route(RouteRequest(route_id=entry.route_id))
+                self.events.append(StationEvent(entry.train_id, EventType.ROUTE_ACQUIRED, entry.route_id, "", self.env.now))
                 logger.info(
                     "[%7.1f] Поезд %s ЗАХВАТИЛ маршрут '%s'",
                     self.env.now,
@@ -116,6 +131,8 @@ class SimulationEngine:
 
         t_depart_s = self.env.now
 
+        self.events.append(StationEvent(entry.train_id, EventType.DEPARTED, entry.route_id, "", t_depart_s))
+
         # 6. Освобождение маршрута после того, как хвост покинет последнюю секцию.
         t_tail_delay_s = 0.0
         if len(physics.head_to_tail_s) > 0:
@@ -128,6 +145,7 @@ class SimulationEngine:
             yield self.env.timeout(t_tail_delay_s)
 
         self.interlocking.cancel_route(entry.route_id)
+        self.events.append(StationEvent(entry.train_id, EventType.ROUTE_RELEASED, entry.route_id, "", self.env.now))
         logger.info(
             "[%7.1f] Поезд %s ОСВОБОДИЛ маршрут '%s' (ушёл со станции)",
             self.env.now,
@@ -138,15 +156,28 @@ class SimulationEngine:
         # Сбор статистики
         t_total_s = self.env.now - entry.t_arrive_s
 
+        v_max_kmh = float(max(physics.v_profile)) if len(physics.v_profile) > 0 else 0.0
+        v_avg_kmh = float(sum(physics.v_profile) / len(physics.v_profile)) if len(physics.v_profile) > 0 else 0.0
+        
+        delay_arrive_s = t_real_arrive_s - entry.t_arrive_s
+        delay_depart_s = t_depart_s - entry.planned_depart_s
+
         res = SimResult(
             train_id=entry.train_id,
             route_id=entry.route_id,
             consist_id=entry.train.consist_id,
             scenario=self.scenario_name,
-            t_arrive_s=entry.t_arrive_s,
+            control_mode=self.control_mode,
+            t_arrive_s=t_real_arrive_s,
             t_depart_s=t_depart_s,
             t_wait_s=t_wait_s,
             t_dwell_s=entry.dwell_s,
             t_total_s=t_total_s,
+            t_planned_arrive_s=entry.t_arrive_s,
+            t_planned_depart_s=entry.planned_depart_s,
+            delay_arrive_s=delay_arrive_s,
+            delay_depart_s=delay_depart_s,
+            v_avg_kmh=v_avg_kmh,
+            v_max_kmh=v_max_kmh,
         )
         self.results.append(res)
