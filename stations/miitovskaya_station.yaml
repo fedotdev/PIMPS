@@ -1,0 +1,37 @@
+station_id: MIIT
+name: Станция Миитовская
+switches:
+  - switch_id: SW1
+    normal_position: plus
+    transfer_time_s: 4.0
+    # Входная стрелка со стороны перегона
+  - switch_id: SW2
+    normal_position: plus
+    transfer_time_s: 4.0
+    # Стрелка на выходную горловину
+
+routes:
+  - route_id: ARR_P2
+    name: Приём на 2-й путь
+    route_type: arrival
+    v_limit: 40.0
+    switches:
+      SW1: minus
+    sections: ["STR_ENTER", "TRK_P2"]
+
+  - route_id: PASS_P1
+    name: Пропуск по 1-му главному пути
+    route_type: passthrough
+    v_limit: 80.0
+    switches:
+      SW1: plus
+      SW2: plus
+    sections: ["STR_ENTER", "TRK_P1", "STR_EXIT"]
+
+  - route_id: DEP_P2
+    name: Отправление со 2-го пути
+    route_type: departure
+    v_limit: 40.0
+    switches:
+      SW2: minus
+    sections: ["TRK_P2", "STR_EXIT"]

@@ -28,11 +28,11 @@ def main():
     logger.info("Инициализация данных...")
     
     # 1. Загружаем конфигурацию станции
-    station_path = Path("stations/demo_station.yaml")
+    station_path = Path("stations/miitovskaya_station.yaml")
     station_config = load_station(station_path)
     
     # 2. Загружаем локомотив и состав
-    loco_path = Path("config/demo_loco.yaml")
+    loco_path = Path("config/2ES5k.yaml")
     locomotive = load_locomotive(loco_path)
     
     train_path = Path("config/demo_train.yaml")
@@ -48,30 +48,41 @@ def main():
         scenario_name="Демо-Сценарий"
     )
     
-    # Поезд 1 прибывает в момент времени 0 и идет по главному пути
+    # 4. Создаем расписание (Scenario) -- Прием поезда в Миитовской
+    
+    # Секции для приема на 2-й путь
+    arr_p2_sections = [
+        RouteSection(section_id="STR_ENTER", s_start=0.0, s_end=150.0, grade=0.0, radius=300.0, v_limit=40.0),
+        RouteSection(section_id="TRK_P2", s_start=150.0, s_end=1400.0, grade=-3.5, radius=0.0, v_limit=40.0)
+    ]
+    
+    # Секции для прохода по главному пути
+    pass_p1_sections = [
+        RouteSection(section_id="STR_ENTER", s_start=0.0, s_end=150.0, grade=0.0, radius=0.0, v_limit=80.0),
+        RouteSection(section_id="TRK_P1", s_start=150.0, s_end=1400.0, grade=-1.5, radius=0.0, v_limit=80.0),
+        RouteSection(section_id="STR_EXIT", s_start=1400.0, s_end=1550.0, grade=0.0, radius=0.0, v_limit=80.0)
+    ]
+    
+    # Поезд 1: Транзитный проход по главному пути
     train_1 = ScenarioEntry(
-        train_id="Поезд-1001",
+        train_id="Freight-101",
         t_arrive_s=0.0,
-        route_id="MAIN_PASS",
+        route_id="PASS_P1",
         train=train,
-        sections=[
-            RouteSection(section_id="TRK_1", s_start=0.0, s_end=5000.0, grade=2.0, radius=0.0, v_limit=80.0)
-        ],
-        v0_kmh=40.0,
+        sections=pass_p1_sections,
+        v0_kmh=60.0,
         dwell_s=0.0
     )
     
-    # Поезд 2 прибывает чуть позже на боковой путь
+    # Поезд 2: ПРИЕМ на 2-й путь со стоянкой (dwell_s)
     train_2 = ScenarioEntry(
-        train_id="Поезд-2002",
-        t_arrive_s=300.0,  # Через 5 минут
-        route_id="SIDE_ARRIVAL",
+        train_id="Freight-102 (Arrival)",
+        t_arrive_s=600.0,  # Через 10 минут после первого
+        route_id="ARR_P2",
         train=train,
-        sections=[
-            RouteSection(section_id="TRK_2", s_start=0.0, s_end=5000.0, grade=0.0, radius=500.0, v_limit=40.0)
-        ],
+        sections=arr_p2_sections,
         v0_kmh=40.0,
-        dwell_s=120.0  # Стоянка 2 минуты
+        dwell_s=180.0  # Стоянка 3 минуты
     )
     
     # Загружаем поезда в симулятор
