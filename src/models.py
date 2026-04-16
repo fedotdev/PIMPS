@@ -59,6 +59,19 @@ class ControlMode(str, Enum):
         }[self.value]
 
 
+class VCMethodology(str, Enum):
+    """Методика работы станции в режиме ВС."""
+    A = "A"   # базовая ВС
+    B = "B"   # специальный режим (Бушуев-Голочалов)
+
+    @property
+    def label_ru(self) -> str:
+        return {
+            "A": "Методика А (Базовая ВС)",
+            "B": "Методика Б (Спец. режим)",
+        }[self.value]
+
+
 # ---------------------------------------------------------------------------
 # ТЯГА — traction/loader.py → traction/engine.py → traction/dynamics.py
 # ---------------------------------------------------------------------------
@@ -256,12 +269,17 @@ class RouteRequest:
 
     Args:
         route_id: идентификатор маршрута из конфигурации станции.
+        train_id: идентификатор поезда, запрашивающего маршрут.
         priority: приоритет запроса (выше — важнее при коллизиях).
             По умолчанию 0.
+        platoon_id: идентификатор пакета (опционально).
     """
 
     route_id: str
+    train_id: str = ""
     priority: int = 0
+    platoon_id: str | None = None
+    batch_routes: list[str] | None = None  # все маршруты пакета для предварительного резервирования
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +341,9 @@ class SimResult:
     delay_depart_s: float = 0.0       # задержка по отправлению
     v_avg_kmh: float = 0.0            # средняя скорость по маршруту (из профиля тяги)
     v_max_kmh: float = 0.0            # максимальная скорость по маршруту (из профиля тяги)
+    vc_methodology: str = "A"         # методика ВС: "A" или "B"
+    platoon_id: str | None = None     # ID пакета (если есть)
+    departure_route_id: str | None = None # маршрут отправления
 
 
 @dataclass
@@ -336,9 +357,13 @@ class ScenarioEntry:
     t_arrive_s: float                 # момент появления поезда в симуляции, с
     route_id: str                     # маршрут в StationConfig
     train: TrainConfig                # состав (локомотив + вагоны)
-    sections: list[RouteSection]      # физические секции для тягового расчёта
+    sections: list[RouteSection]      # физические секции для тягового расчёта (или только для приёма)
     v0_kmh: float = 0.0              # начальная скорость, км/ч
     dwell_s: float = 0.0             # время стоянки на станции, с
+    platoon_id: str | None = None    # ID пакета (None = одиночный поезд)
+    departure_route_id: str | None = None # маршрут отправления (для методики Б)
+    departure_sections: list[RouteSection] | None = None # секции для отправления
+    delay_s: float = 0.0
     
     @property
     def planned_depart_s(self) -> float:

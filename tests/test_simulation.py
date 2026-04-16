@@ -92,7 +92,6 @@ def sim_engine(interlocking) -> SimulationEngine:
         interlocking=interlocking,
         traction_cache=MockTractionCache(), # type: ignore
         scenario_name="TestScenario",
-        retry_interval_s=10.0,
     )
 
 

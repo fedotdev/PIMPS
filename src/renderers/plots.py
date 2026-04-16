@@ -11,7 +11,7 @@ from src.models import PhysicsResult, StationEvent
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["plot_physics_profile", "plot_station_occupancy", "plot_throughput_comparison"]
+__all__ = ["plot_physics_profile", "plot_station_occupancy", "plot_throughput_comparison", "plot_methodology_comparison"]
 
 
 def _ensure_dir(path: Path) -> None:
@@ -169,3 +169,85 @@ def plot_throughput_comparison(scenario_metrics: dict[str, dict[str, float]], ou
     plt.savefig(path, dpi=150, bbox_inches='tight')
     plt.close(fig)
     logger.info("График сравнения сценариев сохранён: %s", path.absolute())
+
+
+# ---------------------------------------------------------------------------
+# Сравнение методик А vs Б (мультибарплот)
+# ---------------------------------------------------------------------------
+
+_COMPARE_KEYS = [
+    ("throughput_trains_per_hour", "Пропускная\nспособность\n(п/ч)"),
+    ("headway_avg_s",             "Ср. интервал\nотправл. (с)"),
+    ("mean_wait_time_s",          "Ср. ожидание\nмаршрута (с)"),
+    ("throat_utilization_pct",    "Использование\nгорловины (%)"),
+    ("packet_integrity_pct",      "Сохранность\nпакетов (%)"),
+    ("max_intra_packet_gap_s",    "Макс. разрыв\nв пакете (с)"),
+]
+
+
+def _prepare_compare_values(metrics: dict[str, float]) -> dict[str, float]:
+    """Преобразует некоторые ключи для удобства отображения."""
+    out = dict(metrics)
+    out["throat_utilization_pct"] = metrics.get("throat_utilization", 0.0) * 100.0
+    pi = metrics.get("packet_integrity_ratio", float("nan"))
+    out["packet_integrity_pct"] = pi * 100.0 if pi == pi else 0.0
+    return out
+
+
+def plot_methodology_comparison(
+    metrics_a: dict[str, float],
+    metrics_b: dict[str, float],
+    metrics_ab: dict[str, float] | None = None,
+    out_path: Path | str = "",
+) -> None:
+    """Строит столбчатую диаграмму сравнения Методик А, Б и АБ по 6 метрикам."""
+    path = Path(out_path)
+    _ensure_dir(path)
+
+    va = _prepare_compare_values(metrics_a)
+    vb = _prepare_compare_values(metrics_b)
+    vab = _prepare_compare_values(metrics_ab) if metrics_ab else None
+
+    labels = [lbl for _, lbl in _COMPARE_KEYS]
+    vals_a = [va.get(k, 0.0) for k, _ in _COMPARE_KEYS]
+    vals_b = [vb.get(k, 0.0) for k, _ in _COMPARE_KEYS]
+    vals_ab = [vab.get(k, 0.0) for k, _ in _COMPARE_KEYS] if vab else None
+
+    x = np.arange(len(labels))
+    
+    fig, ax = plt.subplots(figsize=(14, 7))
+    
+    if vab:
+        width = 0.25
+        bars_ab = ax.bar(x - width, vals_ab, width, label="АБ (Базлайн)", color="#a5a5a5", edgecolor="black")
+        bars_a = ax.bar(x, vals_a, width, label="Методика А", color="#5b9bd5", edgecolor="black")
+        bars_b = ax.bar(x + width, vals_b, width, label="Методика Б", color="#ed7d31", edgecolor="black")
+        bar_groups = (bars_ab, bars_a, bars_b)
+    else:
+        width = 0.35
+        bars_a = ax.bar(x - width / 2, vals_a, width, label="Методика А", color="#5b9bd5", edgecolor="black")
+        bars_b = ax.bar(x + width / 2, vals_b, width, label="Методика Б", color="#ed7d31", edgecolor="black")
+        bar_groups = (bars_a, bars_b)
+
+    # Подписи значений над столбцами
+    for bar_group in bar_groups:
+        for bar in bar_group:
+            h = bar.get_height()
+            ax.annotate(
+                f"{h:.1f}",
+                xy=(bar.get_x() + bar.get_width() / 2, h),
+                xytext=(0, 3),
+                textcoords="offset points",
+                ha="center", va="bottom", fontsize=8, fontweight="bold",
+            )
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=9)
+    ax.set_title("Сравнение Методик (АБ, ВС-А, ВС-Б)", fontsize=14, fontweight="bold")
+    ax.legend(fontsize=11)
+    ax.grid(True, axis="y", linestyle="--", alpha=0.5)
+
+    fig.tight_layout()
+    plt.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    logger.info("График сравнения методик сохранён: %s", path.absolute())

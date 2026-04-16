@@ -17,6 +17,7 @@ from src.models import (
     SwitchConfig,
     SwitchPosition,
     SwitchState,
+    ControlMode,
 )
 
 __all__ = [
@@ -73,8 +74,10 @@ class InterlockingEngine:
         state = engine.get_state()
     """
 
-    def __init__(self, config: StationConfig) -> None:
+    def __init__(self, config: StationConfig, vc_methodology: str = "A", control_mode: str = "AB") -> None:
         self._config = config
+        self._vc_methodology = vc_methodology
+        self._control_mode = control_mode
 
         # Все стрелки в нормальном положении при инициализации
         self._switch_states: dict[str, SwitchState] = {
@@ -82,11 +85,23 @@ class InterlockingEngine:
             for sw_id in config.switches
         }
 
+        # Отслеживание освобождённых входных секций маршрутов (для VC)
+        self._freed_sections: dict[str, set[str]] = {
+            route_id: set() for route_id in config.routes
+        }
+
         # Все маршруты закрыты при инициализации
         self._route_statuses: dict[str, RouteStatus] = {
             route_id: RouteStatus.CLOSED
             for route_id in config.routes
         }
+        
+        # Кто удерживает маршрут (train_id)
+        self._route_acquirers: dict[str, set[str]] = {
+            route_id: set() for route_id in config.routes
+        }
+        # Какой пакет зарезервировал маршрут (route_id -> platoon_id)
+        self._route_reserved_by_platoon: dict[str, str] = {}
 
         # Матрица конфликтов: {route_id → {конфликтующие route_id}}
         self._conflict_matrix: dict[str, set[str]] = self._build_conflict_matrix()
@@ -117,6 +132,9 @@ class InterlockingEngine:
             SwitchOccupiedError: одна из стрелок заперта другим маршрутом.
         """
         route_id = request.route_id
+        train_id = request.train_id
+        platoon_id = request.platoon_id
+        is_method_b = (self._vc_methodology == "B" and platoon_id is not None)
 
         # 1. Проверка существования маршрута
         if route_id not in self._config.routes:
@@ -125,48 +143,94 @@ class InterlockingEngine:
                 f"станции '{self._config.station_id}'"
             )
 
-        # Нельзя открыть уже открытый маршрут
+        # Если маршрут уже открыт
         current_status = self._route_statuses[route_id]
         if current_status in (RouteStatus.OPEN, RouteStatus.REQUESTED):
+            if train_id in self._route_acquirers[route_id]:
+                # Запрос от того же поезда — игнорируем
+                return
+            if is_method_b and self._route_reserved_by_platoon.get(route_id) == platoon_id:
+                # Пакетное присоединение
+                self._route_acquirers[route_id].add(train_id)
+                logger.debug("Поезд %s присоединился к пакетному маршруту %s", train_id, route_id)
+                return
+                
+            # Секционное освобождение (только для режима VC)
+            if self._control_mode == "VC":
+                route = self._config.routes[route_id]
+                if route.sections:
+                    entry_section = route.sections[0]
+                    if entry_section in self._freed_sections[route_id]:
+                        self._route_acquirers[route_id].add(train_id)
+                        # Занимаем входную секцию обратно
+                        self._freed_sections[route_id].remove(entry_section)
+                        logger.debug("Поезд %s попутно занял маршрут %s (секция %s свободна)", train_id, route_id, entry_section)
+                        return
+                    else:
+                        logger.warning("Маршрут '%s' уже в состоянии OPEN (занято), запрос от %s отклонен", route_id, train_id)
+                        raise RouteConflictError(f"Маршрут {route_id} уже занят и sectional release не готов.")
+
             logger.warning(
-                "Маршрут '%s' уже в состоянии %s, повторный запрос проигнорирован",
-                route_id,
-                current_status.name,
+                "Маршрут '%s' уже в состоянии %s (занято), запрос от %s проигнорирован/отклонен",
+                route_id, current_status.name, train_id
             )
-            return
+            raise RouteConflictError(f"Маршрут {route_id} уже открыт другим поездом/пакетом")
 
-        # 2. Проверка конфликтов с активными маршрутами
-        conflicts = self._check_conflicts(route_id)
-        if conflicts:
-            raise RouteConflictError(
-                f"Маршрут '{route_id}' конфликтует с активными маршрутами: "
-                f"{conflicts}"
+        # Определяем, какие маршруты нужно перевести и запереть атомарно
+        routes_to_open = [route_id]
+        if is_method_b and request.batch_routes:
+            # Для методики Б пытаемся занять все запрошенные маршруты пакета сразу
+            routes_to_open = request.batch_routes
+
+        # 2. Проверка конфликтов для всех открываемых маршрутов
+        for rid in routes_to_open:
+            if rid not in self._config.routes:
+                raise RouteNotFoundError(f"Batch маршрут '{rid}' не найден")
+                
+            conflicts = self._check_conflicts(
+                rid, 
+                requester_platoon_id=platoon_id if is_method_b else None,
+                requester_train_id=train_id
             )
+            if conflicts:
+                raise RouteConflictError(
+                    f"Маршрут '{rid}' (часть запроса {route_id}) конфликтует с активными: {conflicts}"
+                )
+            
+            # Также проверяем, не открыт ли батч-маршрут кем-то другим
+            if self._route_statuses[rid] in (RouteStatus.OPEN, RouteStatus.REQUESTED):
+                if not (is_method_b and self._route_reserved_by_platoon.get(rid) == platoon_id):
+                    raise RouteConflictError(f"Маршрут '{rid}' уже занят другим поездом/пакетом")
 
-        route = self._config.routes[route_id]
-
-        # 3. Перевести и запереть стрелки (проверит LOCKED/FAULT внутри)
-        self._lock_switches(route)
-
-        # 4. Маршрут открыт (синхронная модель — сразу OPEN)
-        self._route_statuses[route_id] = RouteStatus.OPEN
+        # 3. Перевести и запереть все требуемые стрелки
+        for rid in routes_to_open:
+            # Если батч-маршрут уже открыт нами же, пропускаем блокировку
+            if self._route_statuses[rid] in (RouteStatus.OPEN, RouteStatus.REQUESTED):
+                continue
+            route = self._config.routes[rid]
+            self._lock_switches(route)
+            self._route_statuses[rid] = RouteStatus.OPEN
+            if is_method_b and platoon_id:
+                self._route_reserved_by_platoon[rid] = platoon_id
+                
+        # 4. Добавляем конкретный поезд в acquirers только для запрошенного маршрута
+        self._route_acquirers[route_id].add(train_id)
 
         logger.info(
-            "Маршрут '%s' (%s) открыт на станции '%s'",
-            route_id,
-            route.name,
-            self._config.station_id,
+            "Маршруты %s открыты на станции '%s' (train=%s, platoon=%s)",
+            routes_to_open, self._config.station_id, train_id, platoon_id
         )
 
-    def cancel_route(self, route_id: str) -> None:
+    def cancel_route(self, route_id: str, train_id: str = "") -> None:
         """Отменить (закрыть) открытый маршрут.
-
-        После отмены все стрелки, входящие только в этот маршрут,
-        возвращаются в нормальное положение. Стрелки, разделяемые
-        с другим активным маршрутом, остаются заперты.
+        
+        Если маршрут используют несколько поездов (пакет), он закрывается
+        только когда его покинет последний поезд.
 
         Args:
             route_id: идентификатор маршрута для отмены.
+            train_id: идентификатор поезда, освобождающего маршрут.
+
 
         Raises:
             RouteNotFoundError: маршрут не найден в конфигурации.
@@ -185,19 +249,81 @@ class InterlockingEngine:
                 f"{current_status.name}, ожидается OPEN или REQUESTED"
             )
 
+        if train_id in self._route_acquirers[route_id]:
+            self._route_acquirers[route_id].remove(train_id)
+            
+        # Если маршрут всё ещё нужен другим поездам пакета - не закрываем!
+        if len(self._route_acquirers[route_id]) > 0:
+            logger.debug(
+                "Маршрут '%s' освобожден поездом %s, но остается OPEN для других поездов пакета",
+                route_id, train_id
+            )
+            return
+
         route = self._config.routes[route_id]
 
         # Отпереть стрелки (с учётом разделяемых с другими маршрутами)
         self._unlock_switches(route)
 
         self._route_statuses[route_id] = RouteStatus.CLOSED
+        self._freed_sections[route_id].clear()
+        if route_id in self._route_reserved_by_platoon:
+            del self._route_reserved_by_platoon[route_id]
 
         logger.info(
-            "Маршрут '%s' (%s) отменён на станции '%s'",
+            "Маршрут '%s' (%s) отменён (train=%s) на станции '%s'",
             route_id,
             route.name,
+            train_id,
             self._config.station_id,
         )
+
+    def release_section(self, route_id: str, section_id: str) -> None:
+        """Пометить секцию маршрута как физически свободную (хвост поезда прошёл её)."""
+        if route_id in self._freed_sections:
+            self._freed_sections[route_id].add(section_id)
+            logger.debug("На маршруте '%s' освобождена секция '%s'", route_id, section_id)
+
+    def is_route_free(self, route_id: str, platoon_id: str | None = None) -> bool:
+        """Проверить, можно ли открыть маршрут без конфликтов (не меняя состояние).
+        
+        Args:
+            route_id: маршрут для проверки.
+            platoon_id: пакет, запрашивающий маршрут.
+            
+        Returns:
+            True, если маршрут свободен и доступен для открытия.
+        """
+        if route_id not in self._config.routes:
+            return False
+            
+        current_status = self._route_statuses[route_id]
+        is_method_b = (self._vc_methodology == "B" and platoon_id is not None)
+        
+        if current_status in (RouteStatus.OPEN, RouteStatus.REQUESTED):
+            if is_method_b and self._route_reserved_by_platoon.get(route_id) == platoon_id:
+                pass # Уже зарезервирован нашим же пакетом
+            else:
+                return False
+                
+        conflicts = self._check_conflicts(
+            route_id, 
+            requester_platoon_id=platoon_id if is_method_b else None,
+            requester_train_id=None # Мы здесь проверяем только факт свободы
+        )
+        if conflicts:
+            return False
+            
+        # Также проверяем стрелки на FAULT или запертость в другом положении
+        route = self._config.routes[route_id]
+        for sw_id, required_pos in route.switches.items():
+            state = self._switch_states[sw_id]
+            if state == SwitchState.FAULT:
+                return False
+            if state == SwitchState.LOCKED and not self._switch_locked_in_position(sw_id, required_pos):
+                return False
+                
+        return True
 
     def get_state(self) -> EngineState:
         """Вернуть снимок текущего состояния всех объектов станции.
@@ -331,23 +457,54 @@ class InterlockingEngine:
 
         return matrix
 
-    def _check_conflicts(self, route_id: str) -> list[str]:
+    def _check_conflicts(
+        self, 
+        route_id: str, 
+        requester_platoon_id: str | None = None,
+        requester_train_id: str | None = None
+    ) -> list[str]:
         """Вернуть список ID активных маршрутов, конфликтующих с route_id.
 
         Args:
             route_id: маршрут, который планируется открыть.
+            requester_platoon_id: ID пакета, запрашивающего маршрут.
+            requester_train_id: ID поезда, запрашивающего маршрут.
 
         Returns:
-            Список конфликтующих активных route_id. Пустой список —
-            конфликтов нет.
+            Список конфликтующих активных route_id.
         """
         conflicting = self._conflict_matrix.get(route_id, set())
-        active_conflicts = [
-            rid for rid in conflicting
-            if self._route_statuses.get(rid) in (
-                RouteStatus.OPEN, RouteStatus.REQUESTED,
-            )
-        ]
+        active_conflicts = []
+        for rid in conflicting:
+            if self._route_statuses.get(rid) in (RouteStatus.OPEN, RouteStatus.REQUESTED):
+                # Проверка: если режим VC и есть освобожденные секции, конфликт может быть исчерпан
+                if self._control_mode == "VC" and self._freed_sections.get(rid):
+                    route_a = self._config.routes[route_id]
+                    route_b = self._config.routes[rid]
+                    
+                    # Оставшиеся (занятые) секции маршрута B
+                    occupied_b = set(route_b.sections) - self._freed_sections[rid]
+                    
+                    # Если общих занятых секций нет и нет конфликта по стрелкам
+                    common_sections = set(route_a.sections) & occupied_b
+                    
+                    # Проверка стрелок (стрелки не освобождаются секционно в этой версии)
+                    common_switches = set(route_a.switches) & set(route_b.switches)
+                    switch_conflict = any(
+                        route_a.switches[sw_id] != route_b.switches[sw_id]
+                        for sw_id in common_switches
+                    )
+                    
+                    if not common_sections and not switch_conflict:
+                        continue # Конфликт снят!
+
+                # Если маршрут принадлежит тому же пакету — игнорируем!
+                if requester_platoon_id and self._route_reserved_by_platoon.get(rid) == requester_platoon_id:
+                    continue
+                # Если маршрут удерживается этим же поездом — игнорируем!
+                if requester_train_id and requester_train_id in self._route_acquirers.get(rid, set()):
+                    continue
+                active_conflicts.append(rid)
         return active_conflicts
 
     def _lock_switches(self, route: RouteConfig) -> None:
