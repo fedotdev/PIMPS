@@ -1,249 +1,1083 @@
-station_id: MIIT
-name: Станция Миитовская
-# Промежуточная однониточная станция на перегонах А–Б и Б–В.
-# Четыре приёмо-отправочных пути: 1П (главный, 1/18), 2П, 3П, 5П (1/11).
-# НГП: sw1, sw3, sw5, sw7 — нечётные, со стороны перегона А–Б.
-# ЧГП: sw2, sw4, sw6, sw8 — чётные, со стороны перегона Б–В.
-# sw1/sw2 — главный ход 1П, марка 1/18, switch_time_s: 5.
-# Остальные стрелки — марка 1/11, switch_time_s: 4.
-# Вариантные маршруты (обход горловины) помечены суффиксом _VAR.
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  station_miitovskaya.yaml — v0.3.0                             ║
+# ╚══════════════════════════════════════════════════════════════════╝
+schema_version: "0.3.0"
+
+station:
+  id: station_miitovskaya
+  name: Станция Миитовская
+  note: >
+    Промежуточная однониточная станция на перегонах А–Б и Б–В,
+    трёхзначная автоблокировка с обеих сторон. Четыре приёмо-отправочных
+    пути: 1П (главный, 1/18), 2П, 3П, 5П (1/11). Предусмотрен вариантный
+    маршрут (обход нечётной горловины). Используется как полигон сравнения
+    сценариев S1/S2 (АБ vs ВС).
+  kind: intermediate
+  track_gauge_mm: 1520
+  rail_type: P65
+  ab_signaling: 3aspect
+
+joints:
+  # --- Сторона А (нечётная горловина) ---
+  - id: ep_A
+    kind: entry_point
+    note: Граница со стороны перегона А–Б (нечётный конец)
+    x: 50
+    y: 0
+    adjacent: перегон А–Б
+    interval_base_min: 8.0
+    interval_vc_min: 4.5
+
+  - id: j_sig_N
+    kind: signal_joint
+    note: Входной светофор Н — приём поездов со стороны А
+    x: 150
+    y: 0
+    signal:
+      id: sig_N
+      kind: entry
+      aspects:
+        - G
+        - "Y"
+        - R
+
+  # Маршрутные светофоры НГП (стоят у предельных столбиков, перед телом пути)
+  - id: j_sig_N1
+    kind: signal_joint
+    note: Маршрутный светофор Н1 — отправление с 1П в сторону А
+    x: 580
+    y: 0
+    signal:
+      id: sig_N1
+      kind: departure
+      aspects:
+        - G
+        - "Y"
+        - R
+
+  - id: j_sig_N2
+    kind: signal_joint
+    note: Маршрутный светофор Н2 — отправление с 2П в сторону А
+    x: 580
+    y: -5.3
+    signal:
+      id: sig_N2
+      kind: departure
+      aspects:
+        - G
+        - "Y"
+        - R
+
+  - id: j_sig_N3
+    kind: signal_joint
+    note: Маршрутный светофор Н3 — отправление с 3П в сторону А
+    x: 580
+    y: 5.3
+    signal:
+      id: sig_N3
+      kind: departure
+      aspects:
+        - G
+        - "Y"
+        - R
+
+  - id: j_sig_N5
+    kind: signal_joint
+    note: Маршрутный светофор Н5 — отправление с 5П в сторону А
+    x: 580
+    y: 10.6
+    signal:
+      id: sig_N5
+      kind: departure
+      aspects:
+        - G
+        - "Y"
+        - R
+
+  # Предельные столбики НГП (западный конец путей — после маршрутных светофоров)
+  - id: j_buf_1P_west
+    kind: buffer
+    note: Предельный столбик 1П — западный конец (НГП)
+    x: 620
+    y: 0
+
+  - id: j_buf_2P_west
+    kind: buffer
+    note: Предельный столбик 2П — западный конец (НГП)
+    x: 620
+    y: -5.3
+
+  - id: j_buf_3P_west
+    kind: buffer
+    note: Предельный столбик 3П — западный конец (НГП)
+    x: 620
+    y: 5.3
+
+  - id: j_buf_5P_west
+    kind: buffer
+    note: Предельный столбик 5П — западный конец (НГП)
+    x: 620
+    y: 10.6
+
+  # Предельные столбики ЧГП (восточный конец путей — перед маршрутными светофорами)
+  - id: j_buf_1P_east
+    kind: buffer
+    note: Предельный столбик 1П — восточный конец (ЧГП)
+    x: 880
+    y: 0
+
+  - id: j_buf_2P_east
+    kind: buffer
+    note: Предельный столбик 2П — восточный конец (ЧГП)
+    x: 880
+    y: -5.3
+
+  - id: j_buf_3P_east
+    kind: buffer
+    note: Предельный столбик 3П — восточный конец (ЧГП)
+    x: 880
+    y: 5.3
+
+  - id: j_buf_5P_east
+    kind: buffer
+    note: Предельный столбик 5П — восточный конец (ЧГП)
+    x: 880
+    y: 10.6
+
+  # Маршрутные светофоры ЧГП (стоят у предельных столбиков, после тела пути)
+  - id: j_sig_CH1
+    kind: signal_joint
+    note: Маршрутный светофор Ч1 — отправление с 1П в сторону Б–В
+    x: 920
+    y: 0
+    signal:
+      id: sig_CH1
+      kind: departure
+      aspects:
+        - G
+        - "Y"
+        - R
+
+  - id: j_sig_CH2
+    kind: signal_joint
+    note: Маршрутный светофор Ч2 — отправление с 2П в сторону Б–В
+    x: 920
+    y: -5.3
+    signal:
+      id: sig_CH2
+      kind: departure
+      aspects:
+        - G
+        - "Y"
+        - R
+
+  - id: j_sig_CH3
+    kind: signal_joint
+    note: Маршрутный светофор Ч3 — отправление с 3П в сторону Б–В
+    x: 920
+    y: 5.3
+    signal:
+      id: sig_CH3
+      kind: departure
+      aspects:
+        - G
+        - "Y"
+        - R
+
+  - id: j_sig_CH5
+    kind: signal_joint
+    note: Маршрутный светофор Ч5 — отправление с 5П в сторону Б–В
+    x: 920
+    y: 10.6
+    signal:
+      id: sig_CH5
+      kind: departure
+      aspects:
+        - G
+        - "Y"
+        - R
+
+  - id: j_sig_CH
+    kind: signal_joint
+    note: Входной светофор Ч — приём поездов со стороны Б–В
+    x: 1350
+    y: 0
+    signal:
+      id: sig_CH
+      kind: entry
+      aspects:
+        - G
+        - "Y"
+        - R
+
+  # --- Сторона Б (чётная горловина) ---
+  - id: ep_B
+    kind: entry_point
+    note: Граница со стороны перегона Б–В (чётный конец)
+    x: 1450
+    y: 0
+    adjacent: перегон Б–В
+    interval_base_min: 8.0
+    interval_vc_min: 4.5
+
+  # Улавливающие тупики
+  - id: j_buf_catch_N2P
+    kind: buffer
+    note: Улавливающий тупик 2П (НГП)
+    x: 250
+    y: -5.3
+
+  - id: j_buf_catch_CH6
+    kind: buffer
+    note: Вариантный тупик за sw6 (ЧГП)
+    x: 1350
+    y: -5.3
 
 switches:
-  # --- Нечётная горловина (НГП, сторона А) ---
-  - switch_id: SW1
-    normal_position: plus
-    transfer_time_s: 5.0   # 1/18, главный ход 1П
-  - switch_id: SW3
-    normal_position: plus
-    transfer_time_s: 4.0   # 1/11, разветвление 2П / группа 3П–5П
-  - switch_id: SW5
-    normal_position: plus
-    transfer_time_s: 4.0   # 1/11, разветвление 3П / 5П
-  - switch_id: SW7
-    normal_position: plus
-    transfer_time_s: 4.0   # 1/11, вариантный обход НГП
+  # --- Нечётная горловина (НГП, нечётные номера) ---
+  - id: sw1
+    note: Стрелка №1 НГП — главный ход 1П, марка 1/18 (v=80 км/ч)
+    x: 250
+    y: 0
+    tg_alpha: "1/18"
+    rail_type: P65
+    switch_time_s: 5
+    drive: emd
+    main_1_l: 18.95
+    main_2_l: 18.95
+    side_l: 25.0
+    side_direction: left
 
-  # --- Чётная горловина (ЧГП, сторона Б) ---
-  - switch_id: SW2
-    normal_position: plus
-    transfer_time_s: 5.0   # 1/18, главный ход 1П
-  - switch_id: SW4
-    normal_position: plus
-    transfer_time_s: 4.0   # 1/11, разветвление группы 3П–5П
-  - switch_id: SW6
-    normal_position: plus
-    transfer_time_s: 4.0   # 1/11, разветвление 2П / группа 3П–5П
-  - switch_id: SW8
-    normal_position: plus
-    transfer_time_s: 4.0   # 1/11, съезд 3П–5П на главный ход
+  - id: sw3
+    note: Стрелка №3 НГП — разветвление 2П / группа 3П–5П
+    x: 350
+    y: -5.3
+    tg_alpha: "1/11"
+    rail_type: P65
+    switch_time_s: 4
+    drive: emd
+    main_1_l: 14.06
+    main_2_l: 14.06
+    side_l: 19.3
+    side_direction: left
+
+  - id: sw5
+    note: Стрелка №5 НГП — разветвление 3П / 5П
+    x: 450
+    y: 5.3
+    tg_alpha: "1/11"
+    rail_type: P65
+    switch_time_s: 4
+    drive: emd
+    main_1_l: 14.06
+    main_2_l: 14.06
+    side_l: 19.3
+    side_direction: left
+
+  - id: sw7
+    note: Стрелка №7 НГП — вариантный маршрут / обход НГП
+    x: 350
+    y: 0
+    tg_alpha: "1/11"
+    rail_type: P65
+    switch_time_s: 4
+    drive: emd
+    main_1_l: 14.06
+    main_2_l: 14.06
+    side_l: 19.3
+    side_direction: left
+
+  # --- Чётная горловина (ЧГП, чётные номера) ---
+  - id: sw2
+    note: Стрелка №2 ЧГП — главный ход 1П, марка 1/18 (v=80 км/ч)
+    x: 1200
+    y: 0
+    tg_alpha: "1/18"
+    rail_type: P65
+    switch_time_s: 5
+    drive: emd
+    main_1_l: 18.95
+    main_2_l: 18.95
+    side_l: 25.0
+    side_direction: left
+
+  - id: sw4
+    note: Стрелка №4 ЧГП — разветвление группы 3П–5П
+    x: 1100
+    y: 5.3
+    tg_alpha: "1/11"
+    rail_type: P65
+    switch_time_s: 4
+    drive: emd
+    main_1_l: 14.06
+    main_2_l: 14.06
+    side_l: 19.3
+    side_direction: left
+
+  - id: sw6
+    note: Стрелка №6 ЧГП — разветвление 2П / группа 3П–5П
+    x: 1100
+    y: -5.3
+    tg_alpha: "1/11"
+    rail_type: P65
+    switch_time_s: 4
+    drive: emd
+    main_1_l: 14.06
+    main_2_l: 14.06
+    side_l: 19.3
+    side_direction: left
+
+  - id: sw8
+    note: Стрелка №8 ЧГП — съезд боковых путей на главный ход
+    x: 1000
+    y: 5.3
+    tg_alpha: "1/11"
+    rail_type: P65
+    switch_time_s: 4
+    drive: emd
+    main_1_l: 14.06
+    main_2_l: 14.06
+    side_l: 19.3
+    side_direction: left
+
+switch_groups:
+  # НГП: блокируются только реально зависимые стрелки
+  - id: sg_ngp_main
+    note: Главный ход НГП (1П)
+    switches:
+      - sw1
+      - sw7
+  - id: sg_ngp_branch
+    note: Боковые пути НГП (2П, 3П, 5П)
+    switches:
+      - sw3
+      - sw5
+  # ЧГП
+  - id: sg_chgp_main
+    note: Главный ход ЧГП (1П)
+    switches:
+      - sw2
+  - id: sg_chgp_branch
+    note: Боковые пути ЧГП (2П, 3П, 5П)
+    switches:
+      - sw4
+      - sw6
+      - sw8
+
+lines:
+  # --- Подходы ---
+  - id: l_ep_A_sigN
+    note: Перегон А — входной светофор Н
+    from: {id: ep_A}
+    to:   {id: j_sig_N}
+    length_m: 100
+    speed_limit_kmh: 80
+
+  - id: l_sigCH_ep_B
+    note: Входной светофор Ч — перегон Б
+    from: {id: j_sig_CH}
+    to:   {id: ep_B}
+    length_m: 100
+    speed_limit_kmh: 80
+
+  # --- НГП: от входного светофора до горловины ---
+  - id: l_sigN_sw1
+    note: Н → sw1 (главный ход)
+    from: {id: j_sig_N}
+    to:   {id: sw1, leg: main_1}
+    length_m: 100
+    speed_limit_kmh: 80
+
+  - id: l_sigN_sw7
+    note: Н → sw7 (вариантный обход)
+    from: {id: j_sig_N}
+    to:   {id: sw7, leg: main_1}
+    length_m: 100
+    speed_limit_kmh: 40
+
+  # sw1: main_2 → sw3 (боковые пути через sw3)
+  - id: l_sw1_sw3
+    note: sw1 (бок) → sw3
+    from: {id: sw1, leg: side}
+    to:   {id: sw3, leg: main_1}
+    length_m: 40
+    speed_limit_kmh: 40
+
+  # sw7: вариантный обход — main_2 → sw3 side, side → улавливающий тупик
+  - id: l_sw7_sw3
+    note: sw7 (main_2, вариант) → sw3 (side)
+    from: {id: sw7, leg: main_2}
+    to:   {id: sw3, leg: side}
+    length_m: 40
+    speed_limit_kmh: 40
+
+  - id: l_sw7_catch
+    note: sw7 (side) → улавливающий тупик НГП
+    from: {id: sw7, leg: side}
+    to:   {id: j_buf_catch_N2P}
+    length_m: 30
+    speed_limit_kmh: 40
+
+  # sw3: разветвление 2П / группа 3П–5П
+  - id: l_sw3_sigN2
+    note: sw3 (main_2) → сигнал Н2 (2П)
+    from: {id: sw3, leg: main_2}
+    to:   {id: j_sig_N2}
+    length_m: 80
+    speed_limit_kmh: 40
+
+  - id: l_sw3_sw5
+    note: sw3 (side) → sw5 (3П–5П)
+    from: {id: sw3, leg: side}
+    to:   {id: sw5, leg: main_1}
+    length_m: 40
+    speed_limit_kmh: 40
+
+  # sw5: разветвление 3П / 5П
+  - id: l_sw5_sigN3
+    note: sw5 (main_2) → сигнал Н3 (3П)
+    from: {id: sw5, leg: main_2}
+    to:   {id: j_sig_N3}
+    length_m: 80
+    speed_limit_kmh: 40
+
+  - id: l_sw5_sigN5
+    note: sw5 (side) → сигнал Н5 (5П)
+    from: {id: sw5, leg: side}
+    to:   {id: j_sig_N5}
+    length_m: 80
+    speed_limit_kmh: 40
+
+  # sw1: main_2 (главный ход 1П) → сигнал Н1
+  - id: l_sw1_sigN1
+    note: sw1 (main_2, главный ход) → сигнал Н1 (1П)
+    from: {id: sw1, leg: main_2}
+    to:   {id: j_sig_N1}
+    length_m: 280
+    speed_limit_kmh: 80
+
+  # --- Маршрутный светофор → предельный столбик (западный конец путей) ---
+  - id: l_sigN1_buf1P_w
+    note: Н1 → предельный столбик 1П (запад)
+    from: {id: j_sig_N1}
+    to:   {id: j_buf_1P_west}
+    length_m: 10
+    speed_limit_kmh: 80
+
+  - id: l_sigN2_buf2P_w
+    note: Н2 → предельный столбик 2П (запад)
+    from: {id: j_sig_N2}
+    to:   {id: j_buf_2P_west}
+    length_m: 10
+    speed_limit_kmh: 40
+
+  - id: l_sigN3_buf3P_w
+    note: Н3 → предельный столбик 3П (запад)
+    from: {id: j_sig_N3}
+    to:   {id: j_buf_3P_west}
+    length_m: 10
+    speed_limit_kmh: 40
+
+  - id: l_sigN5_buf5P_w
+    note: Н5 → предельный столбик 5П (запад)
+    from: {id: j_sig_N5}
+    to:   {id: j_buf_5P_west}
+    length_m: 10
+    speed_limit_kmh: 40
+
+  # --- Тела путей (полезная длина 850 м) ---
+  - id: l_track_1P
+    note: Тело пути 1П
+    from: {id: j_buf_1P_west}
+    to:   {id: j_buf_1P_east}
+    length_m: 850
+    speed_limit_kmh: 80
+
+  - id: l_track_2P
+    note: Тело пути 2П
+    from: {id: j_buf_2P_west}
+    to:   {id: j_buf_2P_east}
+    length_m: 850
+    speed_limit_kmh: 40
+
+  - id: l_track_3P
+    note: Тело пути 3П
+    from: {id: j_buf_3P_west}
+    to:   {id: j_buf_3P_east}
+    length_m: 850
+    speed_limit_kmh: 40
+
+  - id: l_track_5P
+    note: Тело пути 5П
+    from: {id: j_buf_5P_west}
+    to:   {id: j_buf_5P_east}
+    length_m: 850
+    speed_limit_kmh: 40
+
+  # --- Предельный столбик (восточный конец) → маршрутный светофор ЧГП ---
+  - id: l_buf1P_e_sigCH1
+    note: Предельный столбик 1П (восток) → Ч1
+    from: {id: j_buf_1P_east}
+    to:   {id: j_sig_CH1}
+    length_m: 10
+    speed_limit_kmh: 80
+
+  - id: l_buf2P_e_sigCH2
+    note: Предельный столбик 2П (восток) → Ч2
+    from: {id: j_buf_2P_east}
+    to:   {id: j_sig_CH2}
+    length_m: 10
+    speed_limit_kmh: 40
+
+  - id: l_buf3P_e_sigCH3
+    note: Предельный столбик 3П (восток) → Ч3
+    from: {id: j_buf_3P_east}
+    to:   {id: j_sig_CH3}
+    length_m: 10
+    speed_limit_kmh: 40
+
+  - id: l_buf5P_e_sigCH5
+    note: Предельный столбик 5П (восток) → Ч5
+    from: {id: j_buf_5P_east}
+    to:   {id: j_sig_CH5}
+    length_m: 10
+    speed_limit_kmh: 40
+
+  # --- ЧГП: от маршрутных светофоров до входного Ч ---
+  - id: l_sigCH1_sw2
+    note: Ч1 → sw2 (главный ход 1П)
+    from: {id: j_sig_CH1}
+    to:   {id: sw2, leg: main_1}
+    length_m: 240
+    speed_limit_kmh: 80
+
+  - id: l_sigCH2_sw6
+    note: Ч2 → sw6 (2П → ЧГП)
+    from: {id: j_sig_CH2}
+    to:   {id: sw6, leg: main_1}
+    length_m: 80
+    speed_limit_kmh: 40
+
+  - id: l_sigCH3_sw8
+    note: Ч3 → sw8 (3П → ЧГП)
+    from: {id: j_sig_CH3}
+    to:   {id: sw8, leg: main_1}
+    length_m: 80
+    speed_limit_kmh: 40
+
+  - id: l_sigCH5_sw8
+    note: Ч5 → sw8 (5П → ЧГП)
+    from: {id: j_sig_CH5}
+    to:   {id: sw8, leg: side}
+    length_m: 80
+    speed_limit_kmh: 40
+
+  # sw8: съезд 3П/5П → sw4
+  - id: l_sw8_sw4
+    note: sw8 (main_2) → sw4
+    from: {id: sw8, leg: main_2}
+    to:   {id: sw4, leg: main_1}
+    length_m: 40
+    speed_limit_kmh: 40
+
+  # sw4: разветвление группы 3П–5П / главный ход
+  - id: l_sw4_sw2
+    note: sw4 (main_2) → sw2 (главный ход)
+    from: {id: sw4, leg: main_2}
+    to:   {id: sw2, leg: side}
+    length_m: 40
+    speed_limit_kmh: 40
+
+  # sw6: разветвление 2П / группа 3П–5П
+  - id: l_sw6_sw2
+    note: sw6 (main_2) → sw2 (вариантный выход)
+    from: {id: sw6, leg: main_2}
+    to:   {id: sw2, leg: main_1}
+    length_m: 40
+    speed_limit_kmh: 40
+
+  - id: l_sw6_sw4
+    note: sw6 (side) → sw4 (side, диагональ)
+    from: {id: sw6, leg: side}
+    to:   {id: sw4, leg: side}
+    length_m: 40
+    speed_limit_kmh: 40
+
+  - id: l_sw6_catch
+    note: sw6 (side, улавливающий тупик ЧГП)
+    from: {id: sw6, leg: main_2}
+    to:   {id: j_buf_catch_CH6}
+    length_m: 30
+    speed_limit_kmh: 40
+
+  # sw2: main_2 → входной светофор Ч
+  - id: l_sw2_sigCH
+    note: sw2 (main_2) → входной светофор Ч
+    from: {id: sw2, leg: main_2}
+    to:   {id: j_sig_CH}
+    length_m: 100
+    speed_limit_kmh: 80
+
+sections:
+  - id: sec_approach_A
+    note: Участок приближения со стороны А
+    elements:
+      - l_ep_A_sigN
+    occupation_detector: true
+
+  - id: sec_throat_NGP_main
+    note: Горловина НГП — главный ход 1П (sw1, sw7)
+    elements:
+      - j_sig_N
+      - l_sigN_sw1
+      - sw1
+      - l_sw1_sigN1
+      - j_sig_N1
+      - l_sigN1_buf1P_w
+    occupation_detector: true
+
+  - id: sec_throat_NGP_branch
+    note: Горловина НГП — боковые пути 2П/3П/5П (sw3, sw5)
+    elements:
+      - l_sigN_sw7
+      - sw7
+      - l_sw7_sw3
+      - l_sw7_catch
+      - l_sw1_sw3
+      - sw3
+      - l_sw3_sigN2
+      - j_sig_N2
+      - l_sigN2_buf2P_w
+      - l_sw3_sw5
+      - sw5
+      - l_sw5_sigN3
+      - j_sig_N3
+      - l_sigN3_buf3P_w
+      - l_sw5_sigN5
+      - j_sig_N5
+      - l_sigN5_buf5P_w
+    occupation_detector: true
+
+  - id: sec_track_1P
+    note: Путь 1П (главный)
+    elements:
+      - l_track_1P
+    occupation_detector: true
+
+  - id: sec_track_2P
+    note: Путь 2П
+    elements:
+      - l_track_2P
+    occupation_detector: true
+
+  - id: sec_track_3P
+    note: Путь 3П
+    elements:
+      - l_track_3P
+    occupation_detector: true
+
+  - id: sec_track_5P
+    note: Путь 5П
+    elements:
+      - l_track_5P
+    occupation_detector: true
+
+  - id: sec_throat_CHG_main
+    note: Горловина ЧГП — главный ход 1П (sw2)
+    elements:
+      - l_buf1P_e_sigCH1
+      - j_sig_CH1
+      - l_sigCH1_sw2
+      - sw2
+      - l_sw2_sigCH
+      - j_sig_CH
+    occupation_detector: true
+
+  - id: sec_throat_CHG_branch
+    note: Горловина ЧГП — боковые пути 2П/3П/5П (sw4, sw6, sw8)
+    elements:
+      - l_buf2P_e_sigCH2
+      - j_sig_CH2
+      - l_sigCH2_sw6
+      - sw6
+      - l_sw6_sw2
+      - l_sw6_sw4
+      - l_sw6_catch
+      - l_buf3P_e_sigCH3
+      - j_sig_CH3
+      - l_sigCH3_sw8
+      - l_buf5P_e_sigCH5
+      - j_sig_CH5
+      - l_sigCH5_sw8
+      - sw8
+      - l_sw8_sw4
+      - sw4
+      - l_sw4_sw2
+    occupation_detector: true
+
+  - id: sec_approach_B
+    note: Участок приближения со стороны Б
+    elements:
+      - l_sigCH_ep_B
+    occupation_detector: true
+
+tracks:
+  - id: track_1P
+    name: Путь 1П (главный)
+    kind: main
+    useful_length_m: 850
+    section_id: sec_track_1P
+    electrified: true
+    dwell_time_min: 0
+
+  - id: track_2P
+    name: Путь 2П
+    kind: reception_dispatch
+    useful_length_m: 850
+    section_id: sec_track_2P
+    electrified: true
+    dwell_time_min: 8
+
+  - id: track_3P
+    name: Путь 3П
+    kind: reception_dispatch
+    useful_length_m: 850
+    section_id: sec_track_3P
+    electrified: true
+    dwell_time_min: 8
+
+  - id: track_5P
+    name: Путь 5П
+    kind: reception_dispatch
+    useful_length_m: 850
+    section_id: sec_track_5P
+    electrified: true
+    dwell_time_min: 8
 
 routes:
-  # ══════════════════════════════════════════
+  # ══════════════════════════════════════
   #  СКВОЗНОЙ ПРОПУСК
-  # ══════════════════════════════════════════
-
-  - route_id: PASS_1P
+  # ══════════════════════════════════════
+  - id: route_pass_1P
     name: Сквозной пропуск по 1П (А→Б)
-    route_type: passthrough
-    v_limit: 80.0
+    kind: passthrough
+    from: ep_A
+    to: ep_B
+    speed_kmh: 80
+    train_types: [freight, passenger]
+    sections:
+      - sec_approach_A
+      - sec_throat_NGP_main
+      - sec_track_1P
+      - sec_throat_CHG_main
+      - sec_approach_B
     switches:
-      SW1: plus
-      SW2: plus
-    sections: ["SEC_APPROACH_A", "SEC_THROAT_NGP_MAIN", "TRK_1P", "SEC_THROAT_CHG_MAIN", "SEC_APPROACH_B"]
+      - {id: sw1, position: plus}
+      - {id: sw2, position: plus}
 
-  # ══════════════════════════════════════════
+  # ══════════════════════════════════════
   #  ПРИЁМ СО СТОРОНЫ А (НГП)
-  # ══════════════════════════════════════════
-
-  - route_id: ARR_A_1P
+  # ══════════════════════════════════════
+  - id: route_N_1P
     name: Приём со стороны А на 1П
-    route_type: arrival
-    v_limit: 80.0
+    kind: reception
+    from: ep_A
+    to: track_1P
+    speed_kmh: 80
+    train_types: [freight, passenger]
+    sections:
+      - sec_approach_A
+      - sec_throat_NGP_main
+      - sec_track_1P
     switches:
-      SW1: plus
-    sections: ["SEC_APPROACH_A", "SEC_THROAT_NGP_MAIN", "TRK_1P"]
+      - {id: sw1, position: plus}
 
-  - route_id: ARR_A_2P
+  - id: route_N_2P
     name: Приём со стороны А на 2П
-    route_type: arrival
-    v_limit: 40.0
+    kind: reception
+    from: ep_A
+    to: track_2P
+    speed_kmh: 40
+    train_types: [freight]
+    sections:
+      - sec_approach_A
+      - sec_throat_NGP_branch
+      - sec_track_2P
     switches:
-      SW1: minus
-      SW3: plus
-    sections: ["SEC_APPROACH_A", "SEC_THROAT_NGP_BRANCH", "TRK_2P"]
+      - {id: sw1, position: minus}
+      - {id: sw3, position: plus}
 
-  - route_id: ARR_A_3P
+  - id: route_N_3P
     name: Приём со стороны А на 3П
-    route_type: arrival
-    v_limit: 40.0
+    kind: reception
+    from: ep_A
+    to: track_3P
+    speed_kmh: 40
+    train_types: [freight]
+    sections:
+      - sec_approach_A
+      - sec_throat_NGP_branch
+      - sec_track_3P
     switches:
-      SW1: minus
-      SW3: minus
-      SW5: plus
-    sections: ["SEC_APPROACH_A", "SEC_THROAT_NGP_BRANCH", "TRK_3P"]
+      - {id: sw1, position: minus}
+      - {id: sw3, position: minus}
+      - {id: sw5, position: plus}
 
-  - route_id: ARR_A_5P
+  - id: route_N_5P
     name: Приём со стороны А на 5П
-    route_type: arrival
-    v_limit: 40.0
+    kind: reception
+    from: ep_A
+    to: track_5P
+    speed_kmh: 40
+    train_types: [freight]
+    sections:
+      - sec_approach_A
+      - sec_throat_NGP_branch
+      - sec_track_5P
     switches:
-      SW1: minus
-      SW3: minus
-      SW5: minus
-    sections: ["SEC_APPROACH_A", "SEC_THROAT_NGP_BRANCH", "TRK_5P"]
+      - {id: sw1, position: minus}
+      - {id: sw3, position: minus}
+      - {id: sw5, position: minus}
 
-  # ══════════════════════════════════════════
+  # ══════════════════════════════════════
   #  ПРИЁМ СО СТОРОНЫ Б (ЧГП)
-  # ══════════════════════════════════════════
-
-  - route_id: ARR_B_1P
+  # ══════════════════════════════════════
+  - id: route_CH_1P
     name: Приём со стороны Б на 1П
-    route_type: arrival
-    v_limit: 80.0
+    kind: reception
+    from: ep_B
+    to: track_1P
+    speed_kmh: 80
+    train_types: [freight, passenger]
+    sections:
+      - sec_approach_B
+      - sec_throat_CHG_main
+      - sec_track_1P
     switches:
-      SW2: plus
-    sections: ["SEC_APPROACH_B", "SEC_THROAT_CHG_MAIN", "TRK_1P"]
+      - {id: sw2, position: plus}
 
-  - route_id: ARR_B_2P
+  - id: route_CH_2P
     name: Приём со стороны Б на 2П
-    route_type: arrival
-    v_limit: 40.0
+    kind: reception
+    from: ep_B
+    to: track_2P
+    speed_kmh: 40
+    train_types: [freight]
+    sections:
+      - sec_approach_B
+      - sec_throat_CHG_branch
+      - sec_track_2P
     switches:
-      SW2: plus
-      SW6: minus
-      SW4: plus
-    sections: ["SEC_APPROACH_B", "SEC_THROAT_CHG_BRANCH", "TRK_2P"]
+      - {id: sw2, position: minus}
+      - {id: sw6, position: plus}
 
-  - route_id: ARR_B_3P
+  - id: route_CH_3P
     name: Приём со стороны Б на 3П
-    route_type: arrival
-    v_limit: 40.0
+    kind: reception
+    from: ep_B
+    to: track_3P
+    speed_kmh: 40
+    train_types: [freight]
+    sections:
+      - sec_approach_B
+      - sec_throat_CHG_branch
+      - sec_track_3P
     switches:
-      SW2: plus
-      SW4: minus
-      SW8: plus
-    sections: ["SEC_APPROACH_B", "SEC_THROAT_CHG_BRANCH", "TRK_3P"]
+      - {id: sw2, position: plus}
+      - {id: sw4, position: minus}
+      - {id: sw8, position: plus}
 
-  - route_id: ARR_B_5P
+  - id: route_CH_5P
     name: Приём со стороны Б на 5П
-    route_type: arrival
-    v_limit: 40.0
+    kind: reception
+    from: ep_B
+    to: track_5P
+    speed_kmh: 40
+    train_types: [freight]
+    sections:
+      - sec_approach_B
+      - sec_throat_CHG_branch
+      - sec_track_5P
     switches:
-      SW2: plus
-      SW4: minus
-      SW8: minus
-    sections: ["SEC_APPROACH_B", "SEC_THROAT_CHG_BRANCH", "TRK_5P"]
+      - {id: sw2, position: plus}
+      - {id: sw4, position: minus}
+      - {id: sw8, position: minus}
 
   # Вариантный приём на 1П через обход ЧГП
-  - route_id: ARR_B_1P_VAR
+  - id: route_CH_1P_var
     name: Вариантный приём со стороны Б на 1П (обход)
-    route_type: arrival
-    v_limit: 40.0
+    kind: reception
+    from: ep_B
+    to: track_1P
+    speed_kmh: 40
+    train_types: [freight]
+    sections:
+      - sec_approach_B
+      - sec_throat_CHG_branch
+      - sec_track_1P
     switches:
-      SW2: minus
-      SW6: plus
-    sections: ["SEC_APPROACH_B", "SEC_THROAT_CHG_BRANCH", "TRK_1P"]
+      - {id: sw2, position: minus}
+      - {id: sw6, position: minus}
+      - {id: sw4, position: plus}
 
-  # ══════════════════════════════════════════
+  # ══════════════════════════════════════
   #  ОТПРАВЛЕНИЕ В СТОРОНУ А (НГП)
-  # ══════════════════════════════════════════
-
-  - route_id: DEP_1P_A
+  # ══════════════════════════════════════
+  - id: route_1P_A
     name: Отправление с 1П в сторону А
-    route_type: departure
-    v_limit: 80.0
+    kind: departure
+    from: track_1P
+    to: ep_A
+    speed_kmh: 80
+    train_types: [freight, passenger]
+    sections:
+      - sec_track_1P
+      - sec_throat_NGP_main
+      - sec_approach_A
     switches:
-      SW1: plus
-    sections: ["TRK_1P", "SEC_THROAT_NGP_MAIN", "SEC_APPROACH_A"]
+      - {id: sw1, position: plus}
 
-  - route_id: DEP_2P_A
+  - id: route_2P_A
     name: Отправление с 2П в сторону А
-    route_type: departure
-    v_limit: 40.0
+    kind: departure
+    from: track_2P
+    to: ep_A
+    speed_kmh: 40
+    train_types: [freight]
+    sections:
+      - sec_track_2P
+      - sec_throat_NGP_branch
+      - sec_approach_A
     switches:
-      SW3: plus
-      SW1: minus
-    sections: ["TRK_2P", "SEC_THROAT_NGP_BRANCH", "SEC_APPROACH_A"]
+      - {id: sw3, position: plus}
+      - {id: sw1, position: minus}
 
-  - route_id: DEP_3P_A
+  - id: route_3P_A
     name: Отправление с 3П в сторону А
-    route_type: departure
-    v_limit: 40.0
+    kind: departure
+    from: track_3P
+    to: ep_A
+    speed_kmh: 40
+    train_types: [freight]
+    sections:
+      - sec_track_3P
+      - sec_throat_NGP_branch
+      - sec_approach_A
     switches:
-      SW5: plus
-      SW3: minus
-      SW1: minus
-    sections: ["TRK_3P", "SEC_THROAT_NGP_BRANCH", "SEC_APPROACH_A"]
+      - {id: sw5, position: plus}
+      - {id: sw3, position: minus}
+      - {id: sw1, position: minus}
 
-  - route_id: DEP_5P_A
+  - id: route_5P_A
     name: Отправление с 5П в сторону А
-    route_type: departure
-    v_limit: 40.0
+    kind: departure
+    from: track_5P
+    to: ep_A
+    speed_kmh: 40
+    train_types: [freight]
+    sections:
+      - sec_track_5P
+      - sec_throat_NGP_branch
+      - sec_approach_A
     switches:
-      SW5: minus
-      SW3: minus
-      SW1: minus
-    sections: ["TRK_5P", "SEC_THROAT_NGP_BRANCH", "SEC_APPROACH_A"]
+      - {id: sw5, position: minus}
+      - {id: sw3, position: minus}
+      - {id: sw1, position: minus}
 
   # Вариантное отправление с 2П через sw7 (обход НГП)
-  - route_id: DEP_2P_A_VAR
+  - id: route_2P_A_var
     name: Вариантное отправление с 2П в сторону А (обход)
-    route_type: departure
-    v_limit: 40.0
+    kind: departure
+    from: track_2P
+    to: ep_A
+    speed_kmh: 40
+    train_types: [freight]
+    sections:
+      - sec_track_2P
+      - sec_throat_NGP_branch
+      - sec_approach_A
     switches:
-      SW3: plus
-      SW7: plus
-      SW1: minus
-    sections: ["TRK_2P", "SEC_THROAT_NGP_BRANCH", "SEC_APPROACH_A"]
+      - {id: sw3, position: plus}
+      - {id: sw7, position: plus}
+      - {id: sw1, position: minus}
 
-  # ══════════════════════════════════════════
+  # ══════════════════════════════════════
   #  ОТПРАВЛЕНИЕ В СТОРОНУ Б (ЧГП)
-  # ══════════════════════════════════════════
-
-  - route_id: DEP_1P_B
+  # ══════════════════════════════════════
+  - id: route_1P_B
     name: Отправление с 1П в сторону Б
-    route_type: departure
-    v_limit: 80.0
+    kind: departure
+    from: track_1P
+    to: ep_B
+    speed_kmh: 80
+    train_types: [freight, passenger]
+    sections:
+      - sec_track_1P
+      - sec_throat_CHG_main
+      - sec_approach_B
     switches:
-      SW2: plus
-    sections: ["TRK_1P", "SEC_THROAT_CHG_MAIN", "SEC_APPROACH_B"]
+      - {id: sw2, position: plus}
 
-  - route_id: DEP_2P_B
+  - id: route_2P_B
     name: Отправление с 2П в сторону Б
-    route_type: departure
-    v_limit: 40.0
+    kind: departure
+    from: track_2P
+    to: ep_B
+    speed_kmh: 40
+    train_types: [freight]
+    sections:
+      - sec_track_2P
+      - sec_throat_CHG_branch
+      - sec_approach_B
     switches:
-      SW6: minus
-      SW4: plus
-      SW2: plus
-    sections: ["TRK_2P", "SEC_THROAT_CHG_BRANCH", "SEC_APPROACH_B"]
+      - {id: sw6, position: plus}
+      - {id: sw2, position: minus}
 
-  - route_id: DEP_3P_B
+  - id: route_3P_B
     name: Отправление с 3П в сторону Б
-    route_type: departure
-    v_limit: 40.0
+    kind: departure
+    from: track_3P
+    to: ep_B
+    speed_kmh: 40
+    train_types: [freight]
+    sections:
+      - sec_track_3P
+      - sec_throat_CHG_branch
+      - sec_approach_B
     switches:
-      SW8: plus
-      SW4: minus
-      SW2: plus
-    sections: ["TRK_3P", "SEC_THROAT_CHG_BRANCH", "SEC_APPROACH_B"]
+      - {id: sw8, position: plus}
+      - {id: sw4, position: minus}
+      - {id: sw2, position: plus}
 
-  - route_id: DEP_5P_B
+  - id: route_5P_B
     name: Отправление с 5П в сторону Б
-    route_type: departure
-    v_limit: 40.0
+    kind: departure
+    from: track_5P
+    to: ep_B
+    speed_kmh: 40
+    train_types: [freight]
+    sections:
+      - sec_track_5P
+      - sec_throat_CHG_branch
+      - sec_approach_B
     switches:
-      SW8: minus
-      SW4: minus
-      SW2: plus
-    sections: ["TRK_5P", "SEC_THROAT_CHG_BRANCH", "SEC_APPROACH_B"]
+      - {id: sw8, position: minus}
+      - {id: sw4, position: minus}
+      - {id: sw2, position: plus}
 
   # Вариантное отправление с 2П через sw6 (обход ЧГП)
-  - route_id: DEP_2P_B_VAR
+  - id: route_2P_B_var
     name: Вариантное отправление с 2П в сторону Б (обход)
-    route_type: departure
-    v_limit: 40.0
+    kind: departure
+    from: track_2P
+    to: ep_B
+    speed_kmh: 40
+    train_types: [freight]
+    sections:
+      - sec_track_2P
+      - sec_throat_CHG_branch
+      - sec_approach_B
     switches:
-      SW6: plus
-      SW2: minus
-    sections: ["TRK_2P", "SEC_THROAT_CHG_BRANCH", "SEC_APPROACH_B"]
+      - {id: sw6, position: minus}
+      - {id: sw4, position: plus}
+      - {id: sw2, position: plus}
