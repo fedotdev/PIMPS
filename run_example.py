@@ -60,8 +60,22 @@ def get_dep_sections() -> list[RouteSection]:
 PLATOON_DEFS = [
     ("PLT-1", 2, 3),  # Пакет 1: 3 поезда по пути 2
     ("PLT-2", 3, 3),  # Пакет 2: 3 поезда по пути 3
-    ("PLT-3", 4, 2),  # Пакет 3: 2 поезда по пути 4
+    ("PLT-3", 5, 2),  # Пакет 3: 2 поезда по пути 5
 ]
+
+ARRIVAL_ROUTE_BY_TRACK = {
+    1: "route_N_1P",
+    2: "route_N_2P",
+    3: "route_N_3P",
+    5: "route_N_5P",
+}
+
+DEPARTURE_ROUTE_BY_TRACK = {
+    1: "route_1P_B",
+    2: "route_2P_B",
+    3: "route_3P_B",
+    5: "route_5P_B",
+}
 
 # Смещение (в секундах) между началом пакетов.
 # Должно быть достаточным, чтобы горловина (STR_ENTER, SW1) успевала
@@ -87,6 +101,8 @@ def build_vc_entries(
     platoon_start = 0.0
 
     for platoon_id, track_id, count in PLATOON_DEFS:
+        arrival_route_id = ARRIVAL_ROUTE_BY_TRACK[track_id]
+        departure_route_id = DEPARTURE_ROUTE_BY_TRACK[track_id]
         for j in range(count):
             train_idx += 1
             pid = platoon_id if platoon_mode else None
@@ -95,13 +111,13 @@ def build_vc_entries(
             entries.append(ScenarioEntry(
                 train_id=f"Freight-{train_idx:03d}",
                 t_arrive_s=t_arr,
-                route_id=f"ARR_P{track_id}",
+                route_id=arrival_route_id,
                 train=train,
                 sections=get_arr_sections(track_id),
                 v0_kmh=40.0,
                 dwell_s=120.0,
                 platoon_id=pid,
-                departure_route_id=f"DEP_P{track_id}",
+                departure_route_id=departure_route_id,
                 departure_sections=get_dep_sections(),
             ))
         platoon_start += INTER_PLATOON_GAP_S
@@ -113,28 +129,28 @@ def build_packet_split_entries(train) -> list[ScenarioEntry]:
     """СЦЕНАРИЙ 3: ВС с разделением пакета на подходе
     Пакет из 3 поездов (PLT-SPLIT) интервал 180с. 
     Поезд #1 -> P1, #2 -> P3 (чтобы разойтись), #3 -> P1 (снова на старый путь). 
-    Здесь используется PASS_P1 и PASS_P3 (но в ЭЦ у нас ARR_P/DEP_P).
-    Пусть будет прибытие ARR_P2 -> DEP_P2 для P1 и P3 для P3.
+    Здесь используется маршрут прибытия на путь и отправления с пути
+    в терминах текущей ЭЦ.
     Длительность стоянки = 0 (пропуск).
     """
     return [
         ScenarioEntry(
             train_id="Freight-301", t_arrive_s=0,
-            route_id="ARR_P2", train=train, sections=get_arr_sections(2),
+            route_id="route_N_2P", train=train, sections=get_arr_sections(2),
             v0_kmh=40.0, dwell_s=120.0, platoon_id="PLT-SPLIT",
-            departure_route_id="DEP_P2", departure_sections=get_dep_sections()
+            departure_route_id="route_2P_B", departure_sections=get_dep_sections()
         ),
         ScenarioEntry(
             train_id="Freight-302", t_arrive_s=180,
-            route_id="ARR_P3", train=train, sections=get_arr_sections(3),
+            route_id="route_N_3P", train=train, sections=get_arr_sections(3),
             v0_kmh=40.0, dwell_s=120.0, platoon_id="PLT-SPLIT",
-            departure_route_id="DEP_P3", departure_sections=get_dep_sections()
+            departure_route_id="route_3P_B", departure_sections=get_dep_sections()
         ),
         ScenarioEntry(
             train_id="Freight-303", t_arrive_s=360,
-            route_id="ARR_P2", train=train, sections=get_arr_sections(2),
+            route_id="route_N_2P", train=train, sections=get_arr_sections(2),
             v0_kmh=40.0, dwell_s=120.0, platoon_id="PLT-SPLIT",
-            departure_route_id="DEP_P2", departure_sections=get_dep_sections()
+            departure_route_id="route_2P_B", departure_sections=get_dep_sections()
         )
     ]
 
@@ -152,9 +168,9 @@ def build_recovery_entries(train, interval_s: float, platoon_mode: bool) -> list
         delay = delays.get(i, 0.0)
         entries.append(ScenarioEntry(
             train_id=f"Freight-40{i}", t_arrive_s=t_arr,
-            route_id="ARR_P2", train=train, sections=get_arr_sections(2),
+            route_id="route_N_2P", train=train, sections=get_arr_sections(2),
             v0_kmh=40.0, dwell_s=120.0, platoon_id=pid,
-            departure_route_id="DEP_P2", departure_sections=get_dep_sections(),
+            departure_route_id="route_2P_B", departure_sections=get_dep_sections(),
             delay_s=delay
         ))
     return entries

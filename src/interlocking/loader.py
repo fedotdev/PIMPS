@@ -49,19 +49,7 @@ def load_station(path: Path | str) -> StationConfig:
     path = Path(path)
     raw = _read_yaml(path)
 
-    try:
-        station_id: str = raw["station_id"]
-    except KeyError:
-        raise StationConfigError(
-            f"Отсутствует обязательное поле 'station_id' в файле {path}"
-        )
-
-    try:
-        name: str = raw["name"]
-    except KeyError:
-        raise StationConfigError(
-            f"Отсутствует обязательное поле 'name' в файле {path}"
-        )
+    station_id, name = _parse_station_meta(raw, path)
 
     switches = _parse_switches(raw, path)
     routes = _parse_routes(raw, switches, path)
@@ -134,10 +122,10 @@ def _parse_switches(
     switches: dict[str, SwitchConfig] = {}
 
     for idx, item in enumerate(raw_switches):
-        switch_id = item.get("switch_id")
+        switch_id = item.get("switch_id") or item.get("id")
         if not switch_id:
             raise StationConfigError(
-                f"Стрелка #{idx}: отсутствует поле 'switch_id' ({path})"
+                f"Стрелка #{idx}: отсутствует поле 'switch_id'/'id' ({path})"
             )
 
         if switch_id in switches:
@@ -145,7 +133,7 @@ def _parse_switches(
                 f"Дублирующийся switch_id '{switch_id}' в файле {path}"
             )
 
-        raw_pos = item.get("normal_position")
+        raw_pos = item.get("normal_position") or item.get("normal") or "plus"
         try:
             normal_position = SwitchPosition(raw_pos)
         except ValueError:
@@ -155,7 +143,7 @@ def _parse_switches(
                 f"Допустимые значения: {valid} ({path})"
             )
 
-        transfer_time_s: float = item.get("transfer_time_s", 4.0)
+        transfer_time_s: float = item.get("transfer_time_s", item.get("switch_time_s", 4.0))
         if not isinstance(transfer_time_s, (int, float)):
             raise StationConfigError(
                 f"Стрелка '{switch_id}': transfer_time_s должно быть числом ({path})"
@@ -192,10 +180,10 @@ def _parse_routes(
     routes: dict[str, RouteConfig] = {}
 
     for idx, item in enumerate(raw_routes):
-        route_id = item.get("route_id")
+        route_id = item.get("route_id") or item.get("id")
         if not route_id:
             raise StationConfigError(
-                f"Маршрут #{idx}: отсутствует поле 'route_id' ({path})"
+                f"Маршрут #{idx}: отсутствует поле 'route_id'/'id' ({path})"
             )
 
         if route_id in routes:
@@ -203,7 +191,7 @@ def _parse_routes(
                 f"Дублирующийся route_id '{route_id}' в файле {path}"
             )
 
-        raw_type = item.get("route_type")
+        raw_type = item.get("route_type") or _normalize_route_type(item.get("kind"))
         try:
             route_type = RouteType(raw_type)
         except ValueError:
@@ -257,7 +245,7 @@ def _parse_routes(
 
 
 def _parse_route_switches(
-    raw_switches: dict[str, Any],
+    raw_switches: dict[str, Any] | list[dict[str, Any]],
     route_id: str,
     known_switches: dict[str, SwitchConfig],
     path: Path,
@@ -268,8 +256,32 @@ def _parse_route_switches(
         StationConfigError: ссылка на неизвестную стрелку или неизвестная позиция.
     """
     result: dict[str, SwitchPosition] = {}
+    normalized: dict[str, Any] = {}
+    if isinstance(raw_switches, dict):
+        normalized = raw_switches
+    elif isinstance(raw_switches, list):
+        for idx, item in enumerate(raw_switches):
+            if not isinstance(item, dict):
+                raise StationConfigError(
+                    f"Маршрут '{route_id}': switches[{idx}] должен быть словарём ({path})"
+                )
+            sw_id = item.get("id")
+            raw_pos = item.get("position")
+            if not sw_id:
+                raise StationConfigError(
+                    f"Маршрут '{route_id}': switches[{idx}] без поля 'id' ({path})"
+                )
+            if not raw_pos:
+                raise StationConfigError(
+                    f"Маршрут '{route_id}': switches[{idx}] без поля 'position' ({path})"
+                )
+            normalized[sw_id] = raw_pos
+    else:
+        raise StationConfigError(
+            f"Маршрут '{route_id}': секция 'switches' должна быть dict или list ({path})"
+        )
 
-    for sw_id, raw_pos in raw_switches.items():
+    for sw_id, raw_pos in normalized.items():
         if sw_id not in known_switches:
             raise StationConfigError(
                 f"Маршрут '{route_id}': ссылка на неизвестную стрелку "
@@ -286,6 +298,36 @@ def _parse_route_switches(
             )
 
     return result
+
+
+def _parse_station_meta(raw: dict[str, Any], path: Path) -> tuple[str, str]:
+    """Извлекает station_id и name из старой или новой схемы YAML."""
+    station_id = raw.get("station_id")
+    name = raw.get("name")
+    if station_id and name:
+        return str(station_id), str(name)
+
+    station = raw.get("station")
+    if isinstance(station, dict):
+        station_id = station.get("id")
+        name = station.get("name")
+        if station_id and name:
+            return str(station_id), str(name)
+
+    raise StationConfigError(
+        f"Отсутствуют обязательные поля станции ('station_id'/'name' "
+        f"или 'station.id'/'station.name') в файле {path}"
+    )
+
+
+def _normalize_route_type(raw_type: Any) -> Any:
+    """Нормализует альтернативные обозначения route_type в канонические значения."""
+    if not isinstance(raw_type, str):
+        return raw_type
+    mapping = {
+        "reception": "arrival",
+    }
+    return mapping.get(raw_type, raw_type)
 
 
 def _parse_extra_conflicts(
