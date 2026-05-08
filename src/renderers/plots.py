@@ -98,21 +98,91 @@ def plot_station_occupancy(events: list[StationEvent], scenario_name: str, out_p
         
     routes = list(set(o["route_id"] for o in occupancies))
     routes.sort()
-    
-    fig, ax = plt.subplots(figsize=(12, max(4, len(routes) * 0.8)))
-    colors = plt.cm.tab20.colors
-    
-    for i, route in enumerate(routes):
-        route_occs = [o for o in occupancies if o["route_id"] == route]
+    lane_height = 0.35
+    route_gap = 0.3
+    route_layouts: list[dict] = []
+    current_y = 0.0
+
+    for route in routes:
+        route_occs = sorted(
+            [o for o in occupancies if o["route_id"] == route],
+            key=lambda o: (o["start"], o["start"] + o["duration"], o["train_id"]),
+        )
+        lane_ends: list[float] = []
+        assigned_occs: list[dict] = []
+
         for occ in route_occs:
+            start = occ["start"]
+            end = occ["start"] + occ["duration"]
+            lane_idx = None
+
+            for idx, lane_end in enumerate(lane_ends):
+                if start >= lane_end:
+                    lane_idx = idx
+                    lane_ends[idx] = end
+                    break
+
+            if lane_idx is None:
+                lane_idx = len(lane_ends)
+                lane_ends.append(end)
+
+            assigned = dict(occ)
+            assigned["lane"] = lane_idx
+            assigned_occs.append(assigned)
+
+        lane_count = max(1, len(lane_ends))
+        route_height = lane_count * lane_height
+        route_layouts.append({
+            "route": route,
+            "occs": assigned_occs,
+            "base_y": current_y,
+            "height": route_height,
+            "center_y": current_y + route_height / 2,
+        })
+        current_y += route_height + route_gap
+
+    total_rendered_height = max(lane_height, current_y - route_gap)
+    time_start = min(o["start"] for o in occupancies)
+    time_end = max(o["start"] + o["duration"] for o in occupancies)
+    time_span = time_end - time_start
+    major_step = 60.0 if time_span <= 720.0 else 100.0
+    minor_step = major_step / 2.0
+    x_min = np.floor(time_start / major_step) * major_step
+    x_max = np.ceil(time_end / major_step) * major_step
+    
+    fig, ax = plt.subplots(figsize=(12, max(4, total_rendered_height * 1.2)))
+    colors = plt.cm.tab20.colors
+
+    for idx, layout in enumerate(route_layouts):
+        band_color = "#f7f7f7" if idx % 2 else "#ffffff"
+        ax.axhspan(
+            layout["base_y"],
+            layout["base_y"] + layout["height"],
+            facecolor=band_color,
+            edgecolor="none",
+            zorder=0,
+        )
+        if idx > 0:
+            ax.axhline(
+                layout["base_y"] - route_gap / 2,
+                color="#d0d0d0",
+                linewidth=0.8,
+                zorder=1,
+            )
+    
+    for layout in route_layouts:
+        for occ in layout["occs"]:
             # Выберем цвет стабильный относительно имени поезда
             color = colors[hash(occ["train_id"]) % len(colors)]
+            y_bottom = layout["base_y"] + occ["lane"] * lane_height
+            y_center = y_bottom + lane_height / 2
             ax.broken_barh(
-                [(occ["start"], occ["duration"])], 
-                (i - 0.4, 0.8), 
-                facecolors=color, 
-                alpha=0.8, 
-                edgecolor='black'
+                [(occ["start"], occ["duration"])],
+                (y_bottom, lane_height),
+                facecolors=color,
+                alpha=0.8,
+                edgecolor='black',
+                zorder=2,
             )
             
             # Подпись внутри/рядом с блоком
@@ -120,16 +190,26 @@ def plot_station_occupancy(events: list[StationEvent], scenario_name: str, out_p
             # Если блок слишком узкий, поворачиваем текст
             rotation = 90 if occ["duration"] < 50 else 0
             ax.text(
-                text_x, i, occ["train_id"], 
-                ha='center', va='center', rotation=rotation, fontsize=8
+                text_x, y_center, occ["train_id"],
+                ha='center', va='center', rotation=rotation, fontsize=8, zorder=3
             )
             
-    ax.set_yticks(range(len(routes)))
-    ax.set_yticklabels(routes)
+    ax.set_ylim(-route_gap / 2, total_rendered_height + route_gap / 2)
+    ax.set_xlim(x_min, x_max)
+    ax.set_yticks([layout["center_y"] for layout in route_layouts])
+    ax.set_yticklabels([layout["route"] for layout in route_layouts])
+    ax.set_xticks(np.arange(x_min, x_max + major_step * 0.5, major_step))
+    ax.set_xticks(np.arange(x_min, x_max + minor_step * 0.5, minor_step), minor=True)
     ax.set_xlabel("Время, с")
     ax.set_ylabel("Маршруты")
     ax.set_title(f"Диаграмма занятости маршрутов (Сценарий: {scenario_name})")
-    ax.grid(True, axis='x', linestyle='--', alpha=0.6)
+    ax.yaxis.label.set_text("Маршруты / подполосы")
+    ax.tick_params(axis='y', length=0, pad=8)
+    ax.tick_params(axis='x', which='major', length=5)
+    ax.tick_params(axis='x', which='minor', length=3)
+    ax.set_axisbelow(True)
+    ax.grid(True, axis='x', which='major', linestyle='--', alpha=0.55)
+    ax.grid(True, axis='x', which='minor', linestyle=':', alpha=0.25)
     
     fig.tight_layout()
     plt.savefig(path, dpi=150, bbox_inches='tight')

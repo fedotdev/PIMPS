@@ -26,6 +26,7 @@ if _root_dir not in sys.path:
 from src.traction.dynamics import (
     DriveMode,
     TractionCache,
+    apply_speed_limit,
     head_to_tail_profile,
     solve_route,
 )
@@ -34,6 +35,7 @@ from src.traction.loader import load_train
 __all__ = [
     "DriveMode",
     "TractionCache",
+    "apply_speed_limit",
     "head_to_tail_profile",
     "load_train",
     "solve_route",

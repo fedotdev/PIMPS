@@ -110,6 +110,16 @@ class LocomotiveConfig:
                     f"Длина {name} ({len(arr)}) не совпадает с v_table ({n})"
                 )
 
+    @property
+    def locolengthm(self) -> float:
+        """Compatibility alias for legacy PTR-style formulas."""
+        return self.loco_length_m
+
+    @property
+    def bttable(self) -> np.ndarray:
+        """Compatibility alias for locomotive braking table."""
+        return self.bt_table
+
 
 @dataclass
 class TrainConfig:
@@ -121,6 +131,7 @@ class TrainConfig:
     wagon_length_m: float             # длина одного вагона, м
     q0: float                         # нагрузка от оси на рельс, т/ось
     wagon_type: int                   # тип вагона по ПТР (4, 6, ...)
+    bt_wagons_table: np.ndarray | None = None  # удельная тормозная сила вагонов bT(v)
 
     def __post_init__(self) -> None:
         if self.num_wagons <= 0:
@@ -130,6 +141,16 @@ class TrainConfig:
         if self.wagon_mass_t <= 0:
             raise ValueError(
                 f"wagon_mass_t должна быть > 0, получено {self.wagon_mass_t}"
+            )
+        if self.wagon_type not in {4, 6, 8}:
+            raise ValueError(
+                f"wagon_type должен быть 4, 6 или 8, получено {self.wagon_type}"
+            )
+        if self.bt_wagons_table is not None and len(self.bt_wagons_table) != len(self.loco.v_table):
+            raise ValueError(
+                "Длина bt_wagons_table "
+                f"({len(self.bt_wagons_table)}) не совпадает с v_table "
+                f"({len(self.loco.v_table)})"
             )
 
     @property
@@ -141,6 +162,16 @@ class TrainConfig:
     def train_length_m(self) -> float:
         """Полная длина состава: локомотив + вагоны, м."""
         return self.loco.loco_length_m + self.num_wagons * self.wagon_length_m
+
+    @property
+    def trainlengthm(self) -> float:
+        """Compatibility alias requested by PTR-facing calculations."""
+        return self.train_length_m
+
+    @property
+    def btwagons_bttable(self) -> np.ndarray | None:
+        """Compatibility alias for wagon braking table."""
+        return self.bt_wagons_table
 
 
 @dataclass

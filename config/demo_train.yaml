@@ -4,3 +4,7 @@ wagon_mass_t: 80.0
 wagon_length_m: 14.5
 q0: 20.0
 wagon_type: 6
+bt_coeffs:
+  KP: 1.0
+  phi0: 0.25
+  phi1: 0.001

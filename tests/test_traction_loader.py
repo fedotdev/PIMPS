@@ -28,9 +28,9 @@ traction_curve:
   - {v: 50, Fk: 400}
   - {v: 120, Fk: 200}
 adhesion_curve:
-  - {v: 0, Fk: 650}
-  - {v: 50, Fk: 450}
-  - {v: 120, Fk: 250}
+  - {v: 0, Fk: 550}
+  - {v: 50, Fk: 350}
+  - {v: 120, Fk: 150}
 wo_coeffs:
   a: 6.4
   b: 0.089
@@ -70,13 +70,13 @@ class TestLoadLocomotiveSuccess:
         np.testing.assert_array_almost_equal(loco.v_table, [0.0, 50.0, 120.0])
 
         # fk_table = min(traction_curve, adhesion_curve)
-        np.testing.assert_array_almost_equal(loco.fk_table, [600.0, 400.0, 200.0])
+        np.testing.assert_array_almost_equal(loco.fk_table, [550.0, 350.0, 150.0])
 
         assert len(loco.wox_table) == 3
         assert len(loco.bt_table) == 3
 
     def test_loco_only_traction_curve(self, write_yaml):
-        """Если adhesion_curve нет, fk_table берется из traction_curve."""
+        """Если adhesion_curve нет, YAML считается невалидным."""
         yaml_text = """\
         loco_id: L1
         name: Тест
@@ -92,8 +92,8 @@ class TestLoadLocomotiveSuccess:
         wo_coeffs: {a: 2, b: 0.1, c: 0.01}
         bt_coeffs: {K_P: 10, phi_0: 1, phi_1: 1}
         """
-        loco = load_locomotive(write_yaml(yaml_text))
-        np.testing.assert_array_almost_equal(loco.fk_table, [300.0, 100.0])
+        with pytest.raises(LocomotiveConfigError, match="'adhesion_curve' отсутствует"):
+            load_locomotive(write_yaml(yaml_text))
 
     def test_loco_bt_curve_instead_of_coeffs(self, write_yaml):
         """Успешная загрузка, если вместо bt_coeffs задана bt_curve."""
@@ -109,6 +109,9 @@ class TestLoadLocomotiveSuccess:
         traction_curve:
           - {v: 0, Fk: 300}
           - {v: 100, Fk: 100}
+        adhesion_curve:
+          - {v: 0, Fk: 250}
+          - {v: 100, Fk: 80}
         wo_coeffs: {a: 2, b: 0.1, c: 0.01}
         bt_curve:
           - {v: 0, bt: 10}
@@ -148,6 +151,7 @@ class TestLoadLocomotiveErrors:
         num_axes: 8
         v_max: 110.0
         traction_curve: [{v: 0, Fk: 100}, {v: 100, Fk: 50}]
+        adhesion_curve: [{v: 0, Fk: 90}, {v: 100, Fk: 40}]
         wo_coeffs: {a: 0, b: 0, c: 0}
         """
         with pytest.raises(LocomotiveConfigError, match="'bt_curve' или 'bt_coeffs'"):
@@ -189,6 +193,9 @@ class TestLoadLocomotiveErrors:
             traction_curve:
               - {{v: 0, Fk: 300}}
               - {{v: 100, Fk: 100}}
+            adhesion_curve:
+              - {{v: 0, Fk: 250}}
+              - {{v: 100, Fk: 80}}
             wo_coeffs: {{a: 2, b: 0.1, c: 0.01}}
             bt_coeffs: {{K_P: 10, phi_0: 1, phi_1: {bad_phi1}}}
             """
@@ -208,6 +215,9 @@ class TestLoadLocomotiveErrors:
         traction_curve:
           - {v: 0, Fk: 300}
           - {v: 100, Fk: -100}
+        adhesion_curve:
+          - {v: 0, Fk: 250}
+          - {v: 100, Fk: 80}
         wo_coeffs: {a: 2, b: 0.1, c: 0.01}
         bt_coeffs: {K_P: 10, phi_0: 1, phi_1: 1}
         """
@@ -225,6 +235,7 @@ class TestLoadLocomotiveErrors:
         num_axes: 8
         v_max: 110.0
         traction_curve: [{v: 0, Fk: 100}, {v: 100, Fk: 50}]
+        adhesion_curve: [{v: 0, Fk: 90}, {v: 100, Fk: 40}]
         wo_coeffs: {a: 0, b: 0, c: 0}
         bt_coeffs: {K_P: 1, phi_0: 1, phi_1: 1}
         """
@@ -260,6 +271,21 @@ class TestLoadTrain:
         train = load_train(loco, raw)
         assert train.consist_id == "C2"
         assert train.num_wagons == 10
+        np.testing.assert_array_almost_equal(train.bt_wagons_table, np.zeros_like(loco.v_table))
+
+    def test_load_train_wagon_bt_coeffs(self, loco):
+        raw = {
+            "consist_id": "C3",
+            "num_wagons": 10,
+            "wagon_mass_t": 50.0,
+            "wagon_length_m": 14.0,
+            "q0": 15.0,
+            "wagon_type": 4,
+            "bt_coeffs": {"KP": 2.0, "phi0": 1.0, "phi1": 0.22},
+        }
+        train = load_train(loco, raw)
+        expected = 2.0 * (1.0 + 0.22 * loco.v_table / 2.2)
+        np.testing.assert_array_almost_equal(train.bt_wagons_table, expected)
 
     def test_override_consist_id(self, loco):
         raw = {
@@ -285,3 +311,15 @@ class TestLoadTrain:
         """
         with pytest.raises(TrainConfigError, match="num_wagons должен быть > 0"):
             load_train(loco, write_yaml(yaml_text))
+
+    def test_train_invalid_wagon_type(self, loco):
+        raw = {
+            "consist_id": "C_BAD",
+            "num_wagons": 10,
+            "wagon_mass_t": 50.0,
+            "wagon_length_m": 14.0,
+            "q0": 15.0,
+            "wagon_type": 5,
+        }
+        with pytest.raises(TrainConfigError, match="wagon_type должен быть 4, 6 или 8"):
+            load_train(loco, raw)

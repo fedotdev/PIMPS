@@ -30,6 +30,10 @@ logger = logging.getLogger(__name__)
 # Режим движения: тяга / выбег / торможение
 DriveMode = Literal["traction", "coasting", "braking"]
 
+
+class IntegrationOverrunError(RuntimeError):
+    """Raised when the ODE state moves past the last route section."""
+
 # Перевод единиц
 _KMH_TO_MS: float = 1.0 / 3.6
 _MS_TO_KMH: float = 3.6
@@ -120,30 +124,30 @@ def _wi_kn(grade_per_mill: float, train_mass_t: float) -> float:
     """
     Сила сопротивления от уклона Wi, кН.
 
-    ПТР РЖД 2016, §1.2.6, формула 67:
-        wi = i  [Н/кН]  (i — уклон в ‰, g в формулу не входит)
-        Wi = wi · (P + Q) / 1000  [кН]
+    PTR §1.2.6, eq. 67:
+        Wi = i · (P + Q) · g / 1000  [кН],
+        где i — уклон в промилле, P+Q — масса поезда в тоннах.
 
     Знак Wi совпадает со знаком уклона i:
         i > 0 — подъём (сопротивление),
         i < 0 — спуск (ускоряющая сила, добавляется со знаком минус).
     """
-    return grade_per_mill * train_mass_t / 1000.0
+    return grade_per_mill * train_mass_t * _G / 1000.0
 
 
 def _wr_kn(radius_m: float, train_mass_t: float) -> float:
     """
     Сила сопротивления от кривой Wr, кН.
 
-    ПТР РЖД 2016, §1.2.7, формула 68:
-        wr = 700 / R  [Н/кН]  (коэффициент 700 уже включает g)
-        Wr = wr · (P + Q) / 1000  [кН]
+    PTR §1.2.7, eq. 68:
+        Wr = (700 / R) · (P + Q) · g / 1000  [кН],
+        где R — радиус кривой в метрах, P+Q — масса поезда в тоннах.
 
     При radius_m == 0 или None (прямой путь) возвращает 0.
     """
     if not radius_m:
         return 0.0
-    return (700.0 / radius_m) * train_mass_t / 1000.0
+    return (700.0 / radius_m) * train_mass_t * _G / 1000.0
 
 
 def _w_full_kn(
@@ -159,8 +163,8 @@ def _w_full_kn(
     Пересчёт удельных сопротивлений (Н/кН) в абсолютные силы (кН):
         Wox      = wox · P / 1000
         Wo_wagon = wo' · Q / 1000
-        Wi       = i · (P+Q) / 1000         (формула 67)
-        Wr       = (700/R) · (P+Q) / 1000   (формула 68)
+        Wi       = i · (P+Q) · g / 1000       (PTR §1.2.6, eq. 67)
+        Wr       = (700/R) · (P+Q) · g / 1000 (PTR §1.2.7, eq. 68)
 
     Где P — масса локомотива (т), Q — масса вагонов (т).
     """
@@ -173,20 +177,32 @@ def _w_full_kn(
     return wox + wo_w + wi + wr
 
 
+def apply_speed_limit(fk_kn: float, v_ms: float, v_limit_ms: float) -> float:
+    """Returns 0.0 when v >= section speed limit, otherwise returns Fk unchanged."""
+    return 0.0 if v_ms >= v_limit_ms else fk_kn
+
+
 def _bt_full_kn(v_kmh: float, train: TrainConfig) -> float:
     """
     Расчётная тормозная сила Bt(v), кН.
 
-    Интерполирует bt_table по текущей скорости.
+    PTR §2.2: Bt = Bt_loco + Bt_wagons.
     При v <= 0 поезд уже стоит — тормозная сила равна нулю.
-    ПТР РЖД 2016, §2.2.
-
-    ВНИМАНИЕ: учитывается только тормозная сила локомотива.
-    Тормозная сила вагонов (ПТР РЖД 2016, §2.2) не реализована — TODO.
     """
     if v_kmh <= 0.0:
         return 0.0
-    return float(np.interp(v_kmh, train.loco.v_table, train.loco.bt_table))
+
+    bt_loco = float(np.interp(v_kmh, train.loco.v_table, train.loco.bt_table))
+    if train.bt_wagons_table is None:
+        return bt_loco
+
+    b_t_wagon = float(np.interp(v_kmh, train.loco.v_table, train.bt_wagons_table))
+    wagon_mass_total_t = train.num_wagons * train.wagon_mass_t
+    bt_wagons = b_t_wagon * wagon_mass_total_t * _G / 1000.0
+    return bt_loco + bt_wagons
+
+
+applyspeedlimit = apply_speed_limit
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +231,9 @@ def _current_section(
     idx = bisect.bisect_right(s_ends, s_m)
     if idx >= len(sections):
         if s_m > s_ends[-1]:
-            logger.warning("_current_section: s=%.2f вне маршрута (после конца)", s_m)
+            raise IntegrationOverrunError(
+                f"s={s_m:.3f} м больше конца маршрута {s_ends[-1]:.3f} м"
+            )
         return sections[-1]
     return sections[idx]
 
@@ -255,13 +273,11 @@ def _ode(
     s_m   = y[1]
     v_kmh = v_ms * _MS_TO_KMH
 
-    section = _current_section(s_m, sections, s_ends)
+    section = _current_section(min(s_m, s_ends[-1]), sections, s_ends)
 
-    # Ограничитель скорости секции: обнуляем тягу, если скорость достигла v_limit.
-    # Поле v_limit присутствует в RouteSection (models.py, дефолт 120 км/ч).
-    over_limit = (mode == "traction") and (v_kmh >= section.v_limit)
-
-    fk = _fk_kn(v_kmh, train) if (mode == "traction" and not over_limit) else 0.0
+    v_limit_ms = section.v_limit * _KMH_TO_MS
+    fk = _fk_kn(v_kmh, train) if mode == "traction" else 0.0
+    fk = apply_speed_limit(fk, v_ms, v_limit_ms) if mode == "traction" else fk
     bt = _bt_full_kn(v_kmh, train) if mode == "braking"  else 0.0
     w  = _w_full_kn(v_kmh, train, section)
 
@@ -275,16 +291,11 @@ def _ode(
 
 def _make_events(sections: list[RouteSection]) -> list[Callable]:
     """
-    Формирует список терминальных событий для solve_ivp.
+    Формирует события solve_ivp.
 
-    Событие 1 — конец маршрута: s >= s_end последнего участка.
-    Событие 2 — остановка:      v <= 0.
-
-    Оба события терминальные (terminal=True), интегрирование прекращается.
-
-    Ограничения скорости секций реализованы непосредственно в _ode
-    через RouteSection.v_limit — отдельное терминальное событие не нужно:
-    обнуление Fk достаточно для контроля скорости в задачах ВКР.
+    Терминальные события: конец маршрута и остановка.
+    Нетерминальные события: пересечение ограничения скорости v_limit снизу вверх
+    для первого участка и для каждого участка, где v_limit изменяется.
     """
     s_route_end = sections[-1].s_end
 
@@ -300,7 +311,27 @@ def _make_events(sections: list[RouteSection]) -> list[Callable]:
     event_stop.terminal  = True   # type: ignore[attr-defined]
     event_stop.direction = -1     # type: ignore[attr-defined]  # только при убывании v
 
-    return [event_end_of_route, event_stop]
+    events: list[Callable] = [event_end_of_route, event_stop]
+    watched_limits: list[float] = []
+    previous_limit: float | None = None
+    for section in sections:
+        if previous_limit is None or not np.isclose(section.v_limit, previous_limit):
+            watched_limits.append(section.v_limit * _KMH_TO_MS)
+        previous_limit = section.v_limit
+
+    for v_limit_ms in watched_limits:
+        def event_overspeed(
+            t: float,
+            y: list[float],
+            limit_ms: float = v_limit_ms,
+        ) -> float:  # noqa: ARG001
+            return y[0] - limit_ms
+
+        event_overspeed.terminal = False  # type: ignore[attr-defined]
+        event_overspeed.direction = 1     # type: ignore[attr-defined]
+        events.append(event_overspeed)
+
+    return events
 
 
 def solve_route(
@@ -330,6 +361,12 @@ def solve_route(
     Метод: RK45 (scipy.integrate.solve_ivp).
     """
     _validate_sections(sections)
+    route_length_m = sum(section.length_m for section in sections)
+    if train.trainlengthm > route_length_m:
+        raise ValueError(
+            f"Длина поезда {train.trainlengthm:.1f} м больше длины маршрута "
+            f"{route_length_m:.1f} м; head_to_tail_profile не может быть построен корректно."
+        )
 
     y0     = [v0_kmh * _KMH_TO_MS, sections[0].s_start]
     events = _make_events(sections)
@@ -338,17 +375,23 @@ def solve_route(
     # на каждом шаге ODE (_current_section вызывается тысячи раз).
     s_ends_cache = [sec.s_end for sec in sections]
 
-    sol = solve_ivp(
-        fun          = lambda t, y: _ode(t, y, train, sections, mode, s_ends_cache),
-        t_span       = (0.0, t_max_s),
-        y0           = y0,
-        method       = "RK45",
-        events       = events,
-        dense_output = False,
-        max_step     = 1.0,     # шаг ≤1 с для достаточной точности v-профиля
-        rtol         = 1e-4,
-        atol         = 1e-6,
-    )
+    try:
+        sol = solve_ivp(
+            fun          = lambda t, y: _ode(t, y, train, sections, mode, s_ends_cache),
+            t_span       = (0.0, t_max_s),
+            y0           = y0,
+            method       = "RK45",
+            events       = events,
+            dense_output = False,
+            max_step     = 1.0,     # шаг ≤1 с для достаточной точности v-профиля
+            rtol         = 1e-4,
+            atol         = 1e-6,
+        )
+    except IntegrationOverrunError as exc:
+        raise ValueError(
+            f"Интегрирование вышло за конец маршрута consist='{consist_id}', "
+            f"route='{route_id}': {exc}"
+        ) from exc
 
     if sol.status == -1:
         raise ValueError(
@@ -375,7 +418,7 @@ def solve_route(
             s_points=s_points,
             head_to_tail_s=np.zeros(0),  # пустой массив вместо zeros_like
         ),
-        train.train_length_m,
+        train.trainlengthm,
     )
 
     result = PhysicsResult(
@@ -492,6 +535,15 @@ def head_to_tail_profile(
     """
     s = physics.s_points
     t = physics.t_profile
+    if len(s) == 0:
+        return np.zeros(0)
+
+    profile_length_m = float(s[-1] - s[0])
+    if train_length_m > profile_length_m:
+        raise ValueError(
+            f"Длина поезда {train_length_m:.1f} м больше длины профиля "
+            f"{profile_length_m:.1f} м; head_to_tail_profile не может быть построен корректно."
+        )
 
     # Координата хвоста в момент, когда голова находится в точке s[i]
     s_tail = s - train_length_m

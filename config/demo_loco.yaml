@@ -11,9 +11,9 @@ traction_curve:
   - {v: 50, Fk: 400}
   - {v: 120, Fk: 200}
 adhesion_curve:
-  - {v: 0, Fk: 650}
-  - {v: 50, Fk: 450}
-  - {v: 120, Fk: 250}
+  - {v: 0, Fk: 550}
+  - {v: 50, Fk: 350}
+  - {v: 120, Fk: 150}
 wo_coeffs:
   a: 6.4
   b: 0.089

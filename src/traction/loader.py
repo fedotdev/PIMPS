@@ -110,6 +110,7 @@ def load_train(
         raw = _read_yaml(raw_or_path, exc_cls=TrainConfigError)
 
     try:
+        bt_wagons_table = _parse_wagon_brake_curve(raw, loco.v_table)
         train = TrainConfig(
             consist_id     = consist_id or str(raw["consist_id"]),
             loco           = loco,
@@ -118,6 +119,7 @@ def load_train(
             wagon_length_m = float(raw["wagon_length_m"]),
             q0             = float(raw["q0"]),
             wagon_type     = int(raw["wagon_type"]),
+            bt_wagons_table = bt_wagons_table,
         )
     except (TrainConfigError, ConfigError):
         raise
@@ -146,19 +148,25 @@ def _parse_traction_curve(
     Строит v_table и fk_table как поточечный минимум тяговой и сцепной кривых.
 
     По ПТР РЖД 2016 расчётная сила тяги Fk(v) = min(Fk_тяга(v), Fk_сцепление(v)).
-    Если adhesion_curve отсутствует, используется только traction_curve.
+    Поле adhesion_curve обязательно: по ПТР §1.1.3 расчетная тяга берется как
+    Fk(v) = min(Fk_traction(v), Fk_adhesion(v)).
     v_table ограничивается пересечением диапазонов обеих кривых во избежание
     экстраполяции за границы исходных данных.
     """
     if "traction_curve" not in raw:
         raise LocomotiveConfigError("Поле 'traction_curve' отсутствует в YAML.")
+    if "adhesion_curve" not in raw:
+        raise LocomotiveConfigError("Поле 'adhesion_curve' отсутствует в YAML.")
 
     v_tr, fk_tr = _curve_to_arrays(raw["traction_curve"], "traction_curve", "v", "Fk")
-
-    if "adhesion_curve" not in raw:
-        return v_tr, fk_tr
-
     v_ad, fk_ad = _curve_to_arrays(raw["adhesion_curve"], "adhesion_curve", "v", "Fk")
+
+    if fk_ad[0] > fk_tr[0]:
+        raise LocomotiveConfigError(
+            "adhesion_curve[0].Fk должен быть <= traction_curve[0].Fk "
+            f"для sanity-check сцепления при v={v_ad[0]:.1f} км/ч "
+            f"({fk_ad[0]:.3f} > {fk_tr[0]:.3f})."
+        )
 
     # Предупреждаем, если диапазоны кривых не совпадают — np.interp молча экстраполирует
     if v_tr[0] != v_ad[0] or v_tr[-1] != v_ad[-1]:
@@ -297,6 +305,52 @@ def _parse_brake_curve(
             float(np.min(bt_table)),
         )
 
+    return bt_table
+
+
+def _parse_wagon_brake_curve(
+    raw: dict[str, Any],
+    v_table: np.ndarray,
+) -> np.ndarray:
+    """
+    Возвращает удельную тормозную силу вагонов bT_wagon(v) на точках v_table.
+
+    Поддерживает готовую таблицу 'bt_wagons_curve'/'bt_wagon_curve' или коэффициенты
+    'bt_wagons_coeffs'/'bt_wagon_coeffs'/'bt_coeffs'. Для коэффициентов используется
+    PTR §2.2: phi(k) = phi0 + phi1 * v / 2.2, bT_wagon = KP * phi(k).
+    Если вагонные тормозные данные не заданы, возвращается нулевая таблица.
+    """
+    curve = raw.get("bt_wagons_curve", raw.get("bt_wagon_curve"))
+    if curve is not None:
+        try:
+            v_bt, bt_vals = _curve_to_arrays(curve, "bt_wagons_curve", "v", "bt")
+        except LocomotiveConfigError as exc:
+            raise TrainConfigError(str(exc)) from exc
+        bt_table = np.interp(v_table, v_bt, bt_vals)
+    else:
+        coeffs = raw.get(
+            "bt_wagons_coeffs",
+            raw.get("bt_wagon_coeffs", raw.get("bt_coeffs")),
+        )
+        if coeffs is None:
+            return np.zeros_like(v_table, dtype=float)
+        try:
+            k_p = float(coeffs["KP"] if "KP" in coeffs else coeffs["K_P"])
+            phi_0 = float(coeffs["phi0"] if "phi0" in coeffs else coeffs["phi_0"])
+            phi_1 = float(coeffs["phi1"] if "phi1" in coeffs else coeffs["phi_1"])
+        except (KeyError, TypeError, AttributeError) as exc:
+            raise TrainConfigError(
+                "Вагонные bt_coeffs должны содержать KP/K_P, phi0/phi_0, phi1/phi_1."
+            ) from exc
+
+        phi_k = phi_0 + phi_1 * v_table / 2.2
+        bt_table = k_p * phi_k
+
+    if np.any(bt_table < 0):
+        raise TrainConfigError(
+            "Вагонная bt_table содержит отрицательные значения "
+            f"(min={float(np.min(bt_table)):.4f})."
+        )
     return bt_table
 
 

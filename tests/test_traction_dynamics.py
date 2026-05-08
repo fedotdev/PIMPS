@@ -13,10 +13,12 @@ from src.models import (
 )
 from src.traction.dynamics import (
     TractionCache,
+    _bt_full_kn,
     _validate_sections,
     _wi_kn,
     _wo_wagons_kn,
     _wr_kn,
+    apply_speed_limit,
     head_to_tail_profile,
     solve_route,
 )
@@ -76,24 +78,56 @@ class TestPhysicsFunctions:
 
     def test_wi_kn(self):
         """Сопротивление от уклона Wi."""
-        # Уклон 10 ‰, масса 1000 т -> 10 кН
-        assert _wi_kn(10.0, 1000.0) == 10.0
-        # Спуск -5 ‰, масса 1000 т -> -5 кН
-        assert _wi_kn(-5.0, 1000.0) == -5.0
+        # Уклон 10 ‰, масса 1000 т -> 10 * 1000 * g / 1000 = 98.1 кН
+        assert _wi_kn(10.0, 1000.0) == pytest.approx(98.1)
+        # Спуск -5 ‰, масса 1000 т -> -49.05 кН
+        assert _wi_kn(-5.0, 1000.0) == pytest.approx(-49.05)
+
+    def test_wi_zero_grade(self):
+        """Нулевой уклон не дает дополнительного сопротивления."""
+        assert _wi_kn(0.0, 1000.0) == 0.0
 
     def test_wr_kn(self):
         """Сопротивление от кривой Wr."""
-        # 700 / R * M / 1000
-        # радиус 350 м, масса 1000 т -> 700/350 * 1 = 2.0 кН
-        assert _wr_kn(350.0, 1000.0) == 2.0
+        # 700 / R * M * g / 1000
+        # радиус 350 м, масса 1000 т -> 700/350 * 9.81 = 19.62 кН
+        assert _wr_kn(350.0, 1000.0) == pytest.approx(19.62)
         # Без радиуса -> 0
         assert _wr_kn(0.0, 1000.0) == 0.0
+
+    def test_wr_infinite_radius(self):
+        """Бесконечный радиус эквивалентен прямому пути."""
+        assert _wr_kn(float("inf"), 1000.0) == 0.0
+
+    def test_wowagons_all_types(self, test_train: TrainConfig):
+        """Сопротивление вагонов поддерживает 4-, 6- и 8-осные типы."""
+        for wagon_type in (4, 6, 8):
+            test_train.wagon_type = wagon_type
+            test_train.q0 = 8.0
+            assert _wo_wagons_kn(50.0, test_train) > 0.0
+            test_train.q0 = 5.0
+            assert _wo_wagons_kn(50.0, test_train) > 0.0
 
     def test_wo_wagons_unknown_type(self, test_train: TrainConfig):
         """Неизвестный тип вагона → ValueError."""
         test_train.wagon_type = 10
         with pytest.raises(ValueError, match="Неизвестный тип вагона"):
             _wo_wagons_kn(50.0, test_train)
+
+    def test_btfull_loco_plus_wagons(self, test_train: TrainConfig):
+        """Полное торможение складывает локомотивную и вагонную составляющие."""
+        test_train.bt_wagons_table = np.array([2.0, 2.0, 2.0])
+        expected = 50.0 + 2.0 * (10 * 50.0) * 9.81 / 1000.0
+        assert _bt_full_kn(50.0, test_train) == pytest.approx(expected)
+
+    def test_speed_limit_cuts_fk(self):
+        """Тяга обнуляется при достижении ограничения скорости."""
+        assert apply_speed_limit(100.0, v_ms=20.0, v_limit_ms=20.0) == 0.0
+        assert apply_speed_limit(100.0, v_ms=19.9, v_limit_ms=20.0) == 100.0
+
+    def test_trainlength_property(self, test_train: TrainConfig):
+        """Совместимое свойство trainlengthm возвращает полную длину поезда."""
+        assert test_train.trainlengthm == pytest.approx(test_train.train_length_m)
 
 
 # ---------------------------------------------------------------------------
@@ -104,14 +138,14 @@ class TestSolveRoute:
     """Тестирование интегрирования уравнения движения."""
 
     def test_solve_route_basic(self, test_train: TrainConfig):
-        """Базовый успешный проезд короткого 10-метрового участка."""
-        s1 = RouteSection("S1", 0.0, 10.0, 0.0) # Дистанция 10 метров
+        """Базовый успешный проезд участка длиннее состава."""
+        s1 = RouteSection("S1", 0.0, 200.0, 0.0)
         res = solve_route(
             train=test_train,
             sections=[s1],
             consist_id=test_train.consist_id,
             route_id="R1",
-            t_max_s=10.0,  # Защита от долгого интегрирования
+            t_max_s=60.0,  # Защита от долгого интегрирования
         )
         
         assert res.consist_id == "T1"
@@ -124,8 +158,8 @@ class TestSolveRoute:
         assert len(res.t_profile) == len(res.s_points)
         assert len(res.head_to_tail_s) == len(res.s_points)
         
-        # Интегрирование остановило событие конца маршрута (s ≈ 10.0)
-        assert res.s_points[-1] == pytest.approx(10.0, abs=1e-3)
+        # Интегрирование остановило событие конца маршрута (s ≈ 200.0)
+        assert res.s_points[-1] == pytest.approx(200.0, abs=1e-3)
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +172,7 @@ class TestTractionCache:
     def test_cache_miss_and_hit(self, test_train: TrainConfig):
         """Сначала промах (вычисление), потом попадание (тот же объект)."""
         cache = TractionCache()
-        s1 = RouteSection("S1", 0.0, 10.0, 0.0)
+        s1 = RouteSection("S1", 0.0, 200.0, 0.0)
         
         # Miss
         res1 = cache.get_or_compute(test_train, [s1], test_train.consist_id, "R1")
@@ -152,7 +186,7 @@ class TestTractionCache:
     def test_invalidate_and_clear(self, test_train: TrainConfig):
         """Инвалидация по ключу и полная очистка кэша."""
         cache = TractionCache()
-        s1 = RouteSection("S1", 0.0, 10.0, 0.0)
+        s1 = RouteSection("S1", 0.0, 200.0, 0.0)
         cache.get_or_compute(test_train, [s1], "T1", "R1")
         cache.get_or_compute(test_train, [s1], "T1", "R2")
         
