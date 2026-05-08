@@ -40,17 +40,72 @@ logger = logging.getLogger("pimps_demo")
 # Вспомогательные функции для генерации секций
 # ---------------------------------------------------------------------------
 
+# Длина тела пути (полезная длина, м) — совпадает с useful_length_m в YAML
+TRACK_LENGTH_M = 850.0
+
+# Длина горловины НГП (от входного светофора до предельного столбика), м
+THROAT_NGP_M = 150.0
+
+# Длина горловины ЧГП (от предельного столбика до выходной точки), м
+THROAT_CHG_M = 150.0
+
+
 def get_arr_sections(track_id: int) -> list[RouteSection]:
-    """Секции маршрута прибытия (входная горловина -> станционный путь)."""
+    """Секции маршрута прибытия: входная горловина → станционный путь.
+
+    Структура (s_start / s_end):
+      0            → THROAT_NGP_M        : горловина НГП
+      THROAT_NGP_M → THROAT_NGP_M + TRACK_LENGTH_M : тело пути
+    """
+    s_track_end = THROAT_NGP_M + TRACK_LENGTH_M
     return [
-        RouteSection(section_id="STR_ENTER", s_start=0.0, s_end=150.0, grade=0.0, radius=300.0, v_limit=40.0),
-        RouteSection(section_id=f"TRK_P{track_id}", s_start=150.0, s_end=1400.0, grade=-3.5, radius=0.0, v_limit=40.0),
+        RouteSection(
+            section_id="STR_ENTER",
+            s_start=0.0,
+            s_end=THROAT_NGP_M,
+            grade=0.0,
+            radius=300.0,
+            v_limit=40.0,
+        ),
+        RouteSection(
+            section_id=f"TRK_P{track_id}",
+            s_start=THROAT_NGP_M,
+            s_end=s_track_end,
+            grade=-3.5,
+            radius=0.0,
+            v_limit=40.0,
+        ),
     ]
 
-def get_dep_sections() -> list[RouteSection]:
-    """Секции маршрута отправления (станционный путь -> выходная горловина)."""
+
+def get_dep_sections(track_id: int) -> list[RouteSection]:
+    """Секции маршрута отправления: тело пути → выходная горловина ЧГП.
+
+    Поезд стоит на пути, поэтому профиль ДОЛЖЕН начинаться с тела пути,
+    иначе solve_route получает длину маршрута < длины поезда.
+
+    Структура (s_start / s_end):
+      0            → TRACK_LENGTH_M      : тело пути
+      TRACK_LENGTH_M → TRACK_LENGTH_M + THROAT_CHG_M : горловина ЧГП
+    """
+    s_exit_end = TRACK_LENGTH_M + THROAT_CHG_M
     return [
-        RouteSection(section_id="STR_EXIT", s_start=1400.0, s_end=1550.0, grade=0.0, radius=300.0, v_limit=40.0),
+        RouteSection(
+            section_id=f"TRK_P{track_id}",
+            s_start=0.0,
+            s_end=TRACK_LENGTH_M,
+            grade=3.5,
+            radius=0.0,
+            v_limit=40.0,
+        ),
+        RouteSection(
+            section_id="STR_EXIT",
+            s_start=TRACK_LENGTH_M,
+            s_end=s_exit_end,
+            grade=0.0,
+            radius=300.0,
+            v_limit=40.0,
+        ),
     ]
 
 
@@ -92,7 +147,7 @@ def build_vc_entries(
 ) -> list[ScenarioEntry]:
     """Формирует расписание: 8 поездов, 3 пакета (3+3+2).
 
-    Каждый пакет следует по своему станционному пути (P2, P3, P4).
+    Каждый пакет следует по своему станционному пути (P2, P3, P5).
     Внутри пакета поезда идут с интервалом intra_interval_s.
     Между пакетами — фиксированный зазор INTER_PLATOON_GAP_S.
 
@@ -120,7 +175,7 @@ def build_vc_entries(
                 dwell_s=120.0,
                 platoon_id=pid,
                 departure_route_id=departure_route_id,
-                departure_sections=get_dep_sections(),
+                departure_sections=get_dep_sections(track_id),
             ))
         platoon_start += INTER_PLATOON_GAP_S
 
@@ -140,19 +195,19 @@ def build_packet_split_entries(train) -> list[ScenarioEntry]:
             train_id="Freight-301", t_arrive_s=0,
             route_id="route_N_2P", train=train, sections=get_arr_sections(2),
             v0_kmh=40.0, dwell_s=120.0, platoon_id="PLT-SPLIT",
-            departure_route_id="route_2P_B", departure_sections=get_dep_sections()
+            departure_route_id="route_2P_B", departure_sections=get_dep_sections(2)
         ),
         ScenarioEntry(
             train_id="Freight-302", t_arrive_s=180,
             route_id="route_N_3P", train=train, sections=get_arr_sections(3),
             v0_kmh=40.0, dwell_s=120.0, platoon_id="PLT-SPLIT",
-            departure_route_id="route_3P_B", departure_sections=get_dep_sections()
+            departure_route_id="route_3P_B", departure_sections=get_dep_sections(3)
         ),
         ScenarioEntry(
             train_id="Freight-303", t_arrive_s=360,
             route_id="route_N_2P", train=train, sections=get_arr_sections(2),
             v0_kmh=40.0, dwell_s=120.0, platoon_id="PLT-SPLIT",
-            departure_route_id="route_2P_B", departure_sections=get_dep_sections()
+            departure_route_id="route_2P_B", departure_sections=get_dep_sections(2)
         )
     ]
 
@@ -172,7 +227,7 @@ def build_recovery_entries(train, interval_s: float, platoon_mode: bool) -> list
             train_id=f"Freight-40{i}", t_arrive_s=t_arr,
             route_id="route_N_2P", train=train, sections=get_arr_sections(2),
             v0_kmh=40.0, dwell_s=120.0, platoon_id=pid,
-            departure_route_id="route_2P_B", departure_sections=get_dep_sections(),
+            departure_route_id="route_2P_B", departure_sections=get_dep_sections(2),
             delay_s=delay
         ))
     return entries
