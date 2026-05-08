@@ -6,6 +6,7 @@ import pytest
 
 from src.interlocking.engine import InterlockingEngine
 from src.models import (
+    EventType,
     PhysicsResult,
     RouteConfig,
     RouteSection,
@@ -120,6 +121,9 @@ def test_single_train_simulation(sim_engine, dummy_train):
     assert res.train_id == "T1"
     assert res.route_id == "R1"
     assert res.t_arrive_s == 50.0
+    assert res.t_actual_arrive_s == 50.0
+    assert res.t_scheduled_arrive_s == 50.0
+    assert res.t_route_acquired_arrive_s == 50.0
     assert res.t_wait_s == 0.0 # Сразу получил маршрут
     assert res.t_dwell_s == 5.0
     
@@ -128,6 +132,43 @@ def test_single_train_simulation(sim_engine, dummy_train):
     
     # Отправление со станции = arrive + wait (0) + physics (100) + dwell (5) = 155
     assert res.t_depart_s == 155.0
+    assert res.t_actual_depart_s == 155.0
+    assert res.t_final_clear_s == 165.0
+    assert res.arrival_run_s == 100.0
+    assert res.tail_clearance_s == 10.0
+
+
+def test_arrival_time_is_not_replaced_by_route_setup(interlocking, dummy_train):
+    sim = SimulationEngine(
+        interlocking=interlocking,
+        traction_cache=MockTractionCache(t_total_mock=20.0, tail_delay_mock=5.0), # type: ignore
+        scenario_name="SetupScenario",
+        route_setup_time_s=7.0,
+    )
+    entry = ScenarioEntry(
+        train_id="T1",
+        t_arrive_s=10.0,
+        route_id="R1",
+        train=dummy_train, # type: ignore
+        sections=[RouteSection("S1", 0.0, 100.0, 0)],
+    )
+
+    sim.load_scenario([entry])
+    results = sim.run()
+    res = results[0]
+
+    assert res.t_actual_arrive_s == 10.0
+    assert res.t_route_acquired_arrive_s == 10.0
+    assert res.t_arrival_route_clear_s == 37.0
+    assert res.route_setup_wait_s == 7.0
+    assert res.t_wait_s == 7.0
+    assert res.delay_arrive_s == 0.0
+
+    arrived = next(e for e in sim.events if e.event_type is EventType.ARRIVED)
+    acquired = next(e for e in sim.events if e.event_type is EventType.ROUTE_ACQUIRED)
+    assert arrived.t_event_s == 10.0
+    assert acquired.t_event_s == 10.0
+    assert acquired.phase == "arrival_route"
 
 
 def test_two_trains_conflict(sim_engine, dummy_train):

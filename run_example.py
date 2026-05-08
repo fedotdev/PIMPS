@@ -1,5 +1,7 @@
 """Пример запуска симуляции PIMPS: сценарии АБ и ВС (Методики А и Б)."""
+import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 from src.interlocking.engine import InterlockingEngine
@@ -233,7 +235,8 @@ def run_scenario(
     # Метрики
     metrics = calculate_summary_metrics(
         results, events=events, vc_min_headway_s=vc_min_headway_s,
-        planned_interval_s=planned_interval_s
+        planned_interval_s=planned_interval_s,
+        vc_gap_threshold_s=2.0 * vc_min_headway_s,
     )
     logger.info("Метрики [%s]: %s", scenario_name, metrics)
 
@@ -403,6 +406,27 @@ def main():
 
     export_scenario_comparison(scenario_metrics, summary_dir / "throughput_comparison.csv")
     plot_throughput_comparison(scenario_metrics, summary_dir / "throughput_benchmark.png")
+    manifest = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "station_config": "stations/miitovskaya_station.yaml",
+        "locomotive_config": "config/2ES5k.yaml",
+        "train_config": "config/demo_train.yaml",
+        "parameters": {
+            "vc_min_headway_s": VC_MIN_HEADWAY_S,
+            "intra_interval_s": INTRA_INTERVAL_S,
+            "ab_interval_s": AB_INTERVAL_S,
+            "inter_platoon_gap_s": INTER_PLATOON_GAP_S,
+        },
+        "scenarios": list(scenario_metrics.keys()),
+        "outputs": {
+            "data": "output/data",
+            "station": "output/station",
+            "profiles": "output/profiles",
+            "summary": "output/summary",
+        },
+    }
+    with open(summary_dir / "run_manifest.json", "w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=False, indent=2)
     
     # Расширенный отчёт Методика А vs Методика Б
     generate_methodology_comparison_report(
@@ -441,4 +465,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

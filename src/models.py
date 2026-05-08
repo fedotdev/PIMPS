@@ -320,6 +320,10 @@ class StationEvent:
     route_id: str
     section_id: str                   # Может быть пустым, если событие на уровне маршрута
     t_event_s: float
+    phase: str = ""
+    reason: str = ""
+    queue_length: int = 0
+    route_status: str = ""
 
 
 @dataclass
@@ -344,6 +348,19 @@ class SimResult:
     vc_methodology: str = "A"         # методика ВС: "A" или "B"
     platoon_id: str | None = None     # ID пакета (если есть)
     departure_route_id: str | None = None # маршрут отправления
+    t_scheduled_arrive_s: float = 0.0
+    t_actual_arrive_s: float = 0.0
+    t_route_acquired_arrive_s: float = 0.0
+    t_arrival_route_clear_s: float = 0.0
+    t_depart_ready_s: float = 0.0
+    t_actual_depart_s: float = 0.0
+    t_final_clear_s: float = 0.0
+    wait_arrival_route_s: float = 0.0
+    wait_departure_route_s: float = 0.0
+    route_setup_wait_s: float = 0.0
+    arrival_run_s: float = 0.0
+    departure_run_s: float = 0.0
+    tail_clearance_s: float = 0.0
 
 
 @dataclass

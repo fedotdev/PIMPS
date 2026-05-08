@@ -161,10 +161,24 @@ class SimulationEngine:
             if target_arrive_s > self.env.now:
                 yield self.env.timeout(target_arrive_s - self.env.now)
 
-            t_real_arrive_s = self.env.now
-            self.events.append(StationEvent(entry.train_id, EventType.ARRIVED, entry.route_id, "", t_real_arrive_s))
+            t_actual_arrive_s = self.env.now
+            self.events.append(StationEvent(
+                entry.train_id,
+                EventType.ARRIVED,
+                entry.route_id,
+                "",
+                t_actual_arrive_s,
+                phase="arrival",
+            ))
 
             total_wait_s = 0.0
+            wait_arrival_route_s = 0.0
+            wait_departure_route_s = 0.0
+            route_setup_wait_s = 0.0
+            t_route_acquired_arrive_s = t_actual_arrive_s
+            t_arrival_route_clear_s = t_actual_arrive_s
+            t_depart_ready_s = t_actual_arrive_s
+            t_actual_depart_s = t_actual_arrive_s
             
             # === ФАЗА 1: ПРИБЫТИЕ ===
             batch_routes = None
@@ -172,7 +186,15 @@ class SimulationEngine:
                 batch_routes = self.platoon_routes[entry.platoon_id]
 
             t_wait_start = self.env.now
-            self.events.append(StationEvent(entry.train_id, EventType.ROUTE_REQUESTED, entry.route_id, "", self.env.now))
+            self.events.append(StationEvent(
+                entry.train_id,
+                EventType.ROUTE_REQUESTED,
+                entry.route_id,
+                "",
+                self.env.now,
+                phase="arrival_route",
+                queue_length=len(self.pending_requests) + 1,
+            ))
 
             req = RouteRequest(
                 route_id=entry.route_id,
@@ -184,18 +206,27 @@ class SimulationEngine:
             # Ждём в очереди диспетчера
             yield self._request_route_sync(req, priority=entry.t_arrive_s)
             
-            self.events.append(StationEvent(entry.train_id, EventType.ROUTE_ACQUIRED, entry.route_id, "", self.env.now))
+            t_route_acquired_arrive_s = self.env.now
+            wait_arrival_route_s = t_route_acquired_arrive_s - t_wait_start
+            self.events.append(StationEvent(
+                entry.train_id,
+                EventType.ROUTE_ACQUIRED,
+                entry.route_id,
+                "",
+                t_route_acquired_arrive_s,
+                phase="arrival_route",
+            ))
             
             # Подготовка маршрута (перевод стрелок, замыкание)
             if self.route_setup_time_s > 0:
                 yield self.env.timeout(self.route_setup_time_s)
+                route_setup_wait_s += self.route_setup_time_s
 
             # Весь период от запроса до конца подготовки — это ожидание
             total_wait_s += self.env.now - t_wait_start
-            t_real_arrive_s = self.env.now
 
             # Секционное освобождение (только для режима VC)
-            if self.control_mode == ControlMode.VC:
+            if self.control_mode == ControlMode.VC.value:
                 arr_route_config = self.interlocking._config.routes[entry.route_id]
                 if arr_route_config.sections:
                     self.env.process(
@@ -215,13 +246,15 @@ class SimulationEngine:
                 mode="traction",
             )
             yield self.env.timeout(physics_arr.t_total_s)
+            t_arrival_route_clear_s = self.env.now
 
             # === ФАЗА 2: СТОЯНКА ===
             if entry.dwell_s > 0:
                 yield self.env.timeout(entry.dwell_s)
+            t_depart_ready_s = self.env.now
 
             # === ФАЗА 3: ОТПРАВЛЕНИЕ ===
-            t_depart_s = self.env.now
+            t_actual_depart_s = self.env.now
             physics_dep = None
             t_tail_delay_s = 0.0
 
@@ -234,7 +267,15 @@ class SimulationEngine:
                     if now < last_depart + self.vc_min_headway_s:
                         yield self.env.timeout(last_depart + self.vc_min_headway_s - now)
                     
-                    self.events.append(StationEvent(entry.train_id, EventType.ROUTE_REQUESTED, entry.departure_route_id, "", self.env.now))
+                    self.events.append(StationEvent(
+                        entry.train_id,
+                        EventType.ROUTE_REQUESTED,
+                        entry.departure_route_id,
+                        "",
+                        self.env.now,
+                        phase="departure_route",
+                        queue_length=len(self.pending_requests) + 1,
+                    ))
                     
                     req = RouteRequest(
                         route_id=entry.departure_route_id,
@@ -242,35 +283,60 @@ class SimulationEngine:
                         platoon_id=entry.platoon_id,
                     )
                     yield self._request_route_sync(req, priority=entry.t_arrive_s)
-                    self.events.append(StationEvent(entry.train_id, EventType.ROUTE_ACQUIRED, entry.departure_route_id, "", self.env.now))
+                    self.events.append(StationEvent(
+                        entry.train_id,
+                        EventType.ROUTE_ACQUIRED,
+                        entry.departure_route_id,
+                        "",
+                        self.env.now,
+                        phase="departure_route",
+                    ))
                     
                     if self.route_setup_time_s > 0:
                         yield self.env.timeout(self.route_setup_time_s)
+                        route_setup_wait_s += self.route_setup_time_s
 
                 else:
                     # Методика А (или АБ): честный запрос
-                    self.events.append(StationEvent(entry.train_id, EventType.ROUTE_REQUESTED, entry.departure_route_id, "", self.env.now))
+                    self.events.append(StationEvent(
+                        entry.train_id,
+                        EventType.ROUTE_REQUESTED,
+                        entry.departure_route_id,
+                        "",
+                        self.env.now,
+                        phase="departure_route",
+                        queue_length=len(self.pending_requests) + 1,
+                    ))
                     req = RouteRequest(
                         route_id=entry.departure_route_id,
                         train_id=entry.train_id,
                         platoon_id=entry.platoon_id,
                     )
                     yield self._request_route_sync(req, priority=entry.t_arrive_s)
-                    self.events.append(StationEvent(entry.train_id, EventType.ROUTE_ACQUIRED, entry.departure_route_id, "", self.env.now))
+                    self.events.append(StationEvent(
+                        entry.train_id,
+                        EventType.ROUTE_ACQUIRED,
+                        entry.departure_route_id,
+                        "",
+                        self.env.now,
+                        phase="departure_route",
+                    ))
                     
                     if self.route_setup_time_s > 0:
                         yield self.env.timeout(self.route_setup_time_s)
+                        route_setup_wait_s += self.route_setup_time_s
                 
                 # Весь период от Phase 3 start до готовности отправления
                 total_wait_s += self.env.now - t_wait_start
+                wait_departure_route_s = self.env.now - t_wait_start
                             
                 # Фиксация времени отправления (после всех подготовок)
-                t_depart_s = self.env.now
+                t_actual_depart_s = self.env.now
                 if entry.platoon_id:
-                    self.last_platoon_depart_time[entry.platoon_id] = t_depart_s
+                    self.last_platoon_depart_time[entry.platoon_id] = t_actual_depart_s
                     
                 # Запуск секционного освобождения (только в VC)
-                if self.control_mode == ControlMode.VC:
+                if self.control_mode == ControlMode.VC.value:
                     dep_route_config = self.interlocking._config.routes[entry.departure_route_id]
                     if dep_route_config.sections:
                         # Хвост освобождает входную секцию через vc_min_headway_s (интервал попутного следования)
@@ -304,16 +370,38 @@ class SimulationEngine:
 
             # === ФАЗА 4: ОСВОБОЖДЕНИЕ ===
             # Освобождаем все занятые маршруты
+            t_final_clear_s = self.env.now
             self.interlocking.cancel_route(entry.route_id, train_id=entry.train_id)
-            self.events.append(StationEvent(entry.train_id, EventType.ROUTE_RELEASED, entry.route_id, "", self.env.now))
+            self.events.append(StationEvent(
+                entry.train_id,
+                EventType.ROUTE_RELEASED,
+                entry.route_id,
+                "",
+                t_final_clear_s,
+                phase="arrival_route",
+            ))
             
             if entry.departure_route_id:
                 self.interlocking.cancel_route(entry.departure_route_id, train_id=entry.train_id)
-                self.events.append(StationEvent(entry.train_id, EventType.ROUTE_RELEASED, entry.departure_route_id, "", self.env.now))
+                self.events.append(StationEvent(
+                    entry.train_id,
+                    EventType.ROUTE_RELEASED,
+                    entry.departure_route_id,
+                    "",
+                    self.env.now,
+                    phase="departure_route",
+                ))
 
             self._trigger_dispatcher() # Оповещаем диспетчер на освобождение маршрутов
 
-            self.events.append(StationEvent(entry.train_id, EventType.DEPARTED, entry.route_id, "", self.env.now))
+            self.events.append(StationEvent(
+                entry.train_id,
+                EventType.DEPARTED,
+                entry.route_id,
+                "",
+                self.env.now,
+                phase="final_clear",
+            ))
 
             # Сбор статистики
             t_total_s = self.env.now - entry.t_arrive_s
@@ -327,8 +415,8 @@ class SimulationEngine:
             v_max_kmh = float(max(all_v)) if all_v else 0.0
             v_avg_kmh = float(sum(all_v) / len(all_v)) if all_v else 0.0
             
-            delay_arrive_s = t_real_arrive_s - entry.t_arrive_s
-            delay_depart_s = t_depart_s - entry.planned_depart_s
+            delay_arrive_s = t_actual_arrive_s - entry.t_arrive_s
+            delay_depart_s = t_actual_depart_s - entry.planned_depart_s
 
             res = SimResult(
                 train_id=entry.train_id,
@@ -336,8 +424,8 @@ class SimulationEngine:
                 consist_id=entry.train.consist_id,
                 scenario=self.scenario_name,
                 control_mode=self.control_mode,
-                t_arrive_s=t_real_arrive_s,
-                t_depart_s=t_depart_s,
+                t_arrive_s=t_actual_arrive_s,
+                t_depart_s=t_actual_depart_s,
                 t_wait_s=total_wait_s, # сумма ожиданий при приеме и отправлении
                 t_dwell_s=entry.dwell_s,
                 t_total_s=t_total_s,
@@ -350,6 +438,19 @@ class SimulationEngine:
                 vc_methodology=self.vc_methodology,
                 platoon_id=entry.platoon_id,
                 departure_route_id=entry.departure_route_id,
+                t_scheduled_arrive_s=entry.t_arrive_s,
+                t_actual_arrive_s=t_actual_arrive_s,
+                t_route_acquired_arrive_s=t_route_acquired_arrive_s,
+                t_arrival_route_clear_s=t_arrival_route_clear_s,
+                t_depart_ready_s=t_depart_ready_s,
+                t_actual_depart_s=t_actual_depart_s,
+                t_final_clear_s=t_final_clear_s,
+                wait_arrival_route_s=wait_arrival_route_s,
+                wait_departure_route_s=wait_departure_route_s,
+                route_setup_wait_s=route_setup_wait_s,
+                arrival_run_s=physics_arr.t_total_s,
+                departure_run_s=physics_dep.t_total_s if physics_dep else 0.0,
+                tail_clearance_s=t_tail_delay_s,
             )
             self.results.append(res)
         except Exception as e:
@@ -358,6 +459,9 @@ class SimulationEngine:
 
     def _release_entry_section(self, delay_s: float, route_id: str, section_id: str):
         """Фоновый процесс: освобождает входную секцию после прохождения хвоста."""
-        yield self.env.timeout(delay_s)
-        self.interlocking.release_section(route_id, section_id)
+        try:
+            yield self.env.timeout(delay_s)
+            self.interlocking.release_section(route_id, section_id)
+        except Exception as e:
+            logger.exception("Ошибка при освобождении секции %s: %s", section_id, e)
         self._trigger_dispatcher()

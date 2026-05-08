@@ -100,6 +100,85 @@ def generate_markdown_report(
     logger.info("Markdown-отчёт сформирован: %s", path.absolute())
 
 
+def generate_markdown_report(
+    results: list[SimResult],
+    metrics: dict[str, float],
+    out_path: Path | str,
+) -> None:
+    """Генерирует Markdown-отчет с явным разделением временных фаз."""
+    path = Path(out_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    scenario = results[0].scenario if results else "N/A"
+    control_mode_str = "N/A"
+    if results:
+        try:
+            control_mode_str = ControlMode(results[0].control_mode).label_ru
+        except ValueError:
+            control_mode_str = results[0].control_mode
+
+    lines = [
+        "# Отчет по имитации станционной работы",
+        f"\n**Сценарий:** {scenario}",
+        f"\n**Режим СИРДП:** {control_mode_str}",
+        "\n## Сводная статистика",
+        "Пропускная способность считается по интервалу от первого фактического прибытия до последнего фактического отправления.",
+        "Времена прибытия, готовности маршрута, отправления и финального освобождения выводятся отдельно.",
+        f"- **Принято поездов:** {int(metrics.get('trains_total', len(results)))}",
+        f"- **Пропускная способность:** {metrics.get('throughput_trains_per_hour', 0):.2f} поездов/час",
+        f"- **Средний headway:** {metrics.get('headway_avg_s', 0):.1f} с",
+        f"- **Среднее ожидание всего:** {metrics.get('mean_wait_time_s', 0):.1f} с",
+        f"- **Ожидание маршрута прибытия:** {metrics.get('wait_arrival_route_avg_s', 0):.1f} с",
+        f"- **Ожидание маршрута отправления:** {metrics.get('wait_departure_route_avg_s', 0):.1f} с",
+        f"- **Подготовка маршрутов:** {metrics.get('route_setup_wait_avg_s', 0):.1f} с",
+        f"- **Средняя задержка отправления:** {metrics.get('delay_depart_avg_s', 0):.1f} с",
+        f"- **Среднее время в системе:** {metrics.get('mean_travel_time_s', 0):.1f} с",
+        f"- **Использование горловины:** {metrics.get('throat_utilization', 0):.2%}",
+    ]
+
+    if "packet_integrity_ratio" in metrics and not np.isnan(metrics.get("packet_integrity_ratio", float("nan"))):
+        lines.extend([
+            "\n## Пакетные метрики",
+            f"- **Сохранность пакетов:** {metrics.get('packet_integrity_ratio', 0):.0%}",
+            f"- **Максимальный разрыв внутри пакета:** {metrics.get('max_intra_packet_gap_s', 0):.1f} с",
+            f"- **Превышен порог разрыва:** {metrics.get('max_gap_exceeds_vc_threshold', False)}",
+            f"- **Задержка разделения пакета:** {metrics.get('packet_split_delay_s', 0):.1f} с",
+        ])
+
+    lines.extend([
+        "\n## Устойчивость",
+        f"- **Максимальная очередь в горловине:** {int(metrics.get('max_queue_length', 0))} поездов",
+        f"- **Каскадная задержка:** {metrics.get('cascade_delay_s', 0):.1f} с",
+        f"- **Время восстановления:** {metrics.get('recovery_time_s', 0):.1f} с",
+        "\n## Таблица поездов",
+        "| Поезд | Пакет | Маршрут | План приб. | Факт приб. | Готов маршрут | Отправление | Ожидание | Задерж. отпр. | Финал |",
+        "|:---|:---|:---|---:|---:|---:|---:|---:|---:|---:|",
+    ])
+
+    for r in results:
+        lines.append(
+            f"| {r.train_id} | {r.platoon_id or '-'} | {r.route_id} | "
+            f"{r.t_scheduled_arrive_s:.0f} | {r.t_actual_arrive_s:.0f} | "
+            f"{r.t_route_acquired_arrive_s:.0f} | {r.t_actual_depart_s:.0f} | "
+            f"{r.t_wait_s:.1f} | {r.delay_depart_s:.1f} | {r.t_final_clear_s:.1f} |"
+        )
+
+    lines.extend([
+        "\n## Пояснение полей",
+        "- **Факт приб.**: момент появления поезда в модели с учетом внешней задержки.",
+        "- **Готов маршрут**: момент, когда маршрут прибытия получен у ЭЦ.",
+        "- **Отправление**: момент готовности маршрута отправления и начала выхода со станции.",
+        "- **Финал**: момент освобождения маршрутов хвостом поезда.",
+        "\n---",
+        "*Отчет сгенерирован автоматически PIMPS Simulation Engine.*",
+    ])
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+    logger.info("Markdown-отчет сформирован: %s", path.absolute())
+
+
 def export_sim_results(results: list[SimResult], out_path: Path | str) -> None:
     """Сохраняет результаты каждого поезда в CSV-файл."""
     if not results:
@@ -112,12 +191,34 @@ def export_sim_results(results: list[SimResult], out_path: Path | str) -> None:
     data = [
         {
             "train_id": r.train_id,
+            "platoon_id": r.platoon_id or "",
             "route_id": r.route_id,
+            "departure_route_id": r.departure_route_id or "",
             "consist_id": r.consist_id,
             "scenario": r.scenario,
+            "control_mode": r.control_mode,
+            "vc_methodology": r.vc_methodology,
+            "t_scheduled_arrive_s": round(r.t_scheduled_arrive_s, 1),
+            "t_actual_arrive_s": round(r.t_actual_arrive_s, 1),
+            "t_route_acquired_arrive_s": round(r.t_route_acquired_arrive_s, 1),
+            "t_arrival_route_clear_s": round(r.t_arrival_route_clear_s, 1),
+            "t_depart_ready_s": round(r.t_depart_ready_s, 1),
+            "t_actual_depart_s": round(r.t_actual_depart_s, 1),
+            "t_final_clear_s": round(r.t_final_clear_s, 1),
             "t_arrive_s": round(r.t_arrive_s, 1),
             "t_depart_s": round(r.t_depart_s, 1),
+            "t_planned_depart_s": round(r.t_planned_depart_s, 1),
             "t_total_s": round(r.t_total_s, 1),
+            "t_wait_s": round(r.t_wait_s, 1),
+            "wait_arrival_route_s": round(r.wait_arrival_route_s, 1),
+            "wait_departure_route_s": round(r.wait_departure_route_s, 1),
+            "route_setup_wait_s": round(r.route_setup_wait_s, 1),
+            "t_dwell_s": round(r.t_dwell_s, 1),
+            "arrival_run_s": round(r.arrival_run_s, 1),
+            "departure_run_s": round(r.departure_run_s, 1),
+            "tail_clearance_s": round(r.tail_clearance_s, 1),
+            "delay_arrive_s": round(r.delay_arrive_s, 1),
+            "delay_depart_s": round(r.delay_depart_s, 1),
             "v_avg_kmh": round(r.v_avg_kmh, 1),
             "v_max_kmh": round(r.v_max_kmh, 1),
         }
@@ -153,7 +254,11 @@ def export_events_log(events: list[StationEvent], out_path: Path | str) -> None:
         "event_type": e.event_type.value, 
         "route_id": e.route_id, 
         "section_id": e.section_id, 
-        "t_event_s": round(e.t_event_s, 1)
+        "t_event_s": round(e.t_event_s, 1),
+        "phase": e.phase,
+        "reason": e.reason,
+        "queue_length": e.queue_length,
+        "route_status": e.route_status,
     } for e in events]
     
     df = pd.DataFrame(data)
@@ -172,11 +277,15 @@ def export_delays_table(results: list[SimResult], out_path: Path | str) -> None:
         "train_id": r.train_id,
         "scenario": r.scenario,
         "t_planned_arrive_s": round(r.t_planned_arrive_s, 1),
-        "t_real_arrive_s": round(r.t_arrive_s, 1),
+        "t_real_arrive_s": round(r.t_actual_arrive_s, 1),
         "delay_arrive_s": round(r.delay_arrive_s, 1),
         "t_planned_depart_s": round(r.t_planned_depart_s, 1),
-        "t_real_depart_s": round(r.t_depart_s, 1),
-        "delay_depart_s": round(r.delay_depart_s, 1)
+        "t_depart_ready_s": round(r.t_depart_ready_s, 1),
+        "t_real_depart_s": round(r.t_actual_depart_s, 1),
+        "delay_depart_s": round(r.delay_depart_s, 1),
+        "wait_arrival_route_s": round(r.wait_arrival_route_s, 1),
+        "wait_departure_route_s": round(r.wait_departure_route_s, 1),
+        "route_setup_wait_s": round(r.route_setup_wait_s, 1),
     } for r in results]
     
     df = pd.DataFrame(data)
@@ -190,6 +299,7 @@ def calculate_summary_metrics(
     headway_route_id: str | None = None,
     vc_min_headway_s: float = 60.0,
     planned_interval_s: float = 0.0,
+    vc_gap_threshold_s: float = 120.0,
 ) -> dict[str, float]:
     """Агрегирует основные метрики (среднее ожидание, пропускная способность, задержки)."""
     if not results:
@@ -201,8 +311,12 @@ def calculate_summary_metrics(
         "trains_total": float(len(results)),
         "mean_wait_time_s": float(df["t_wait_s"].mean() if not df["t_wait_s"].isna().all() else 0.0),
         "max_wait_time_s": float(df["t_wait_s"].max() if not df["t_wait_s"].isna().all() else 0.0),
+        "wait_arrival_route_avg_s": float(df["wait_arrival_route_s"].mean() if "wait_arrival_route_s" in df else 0.0),
+        "wait_departure_route_avg_s": float(df["wait_departure_route_s"].mean() if "wait_departure_route_s" in df else 0.0),
+        "route_setup_wait_avg_s": float(df["route_setup_wait_s"].mean() if "route_setup_wait_s" in df else 0.0),
         "mean_travel_time_s": float(df["t_total_s"].mean() if not df["t_total_s"].isna().all() else 0.0),
-        "total_span_s": float((df["t_depart_s"].max() - df["t_arrive_s"].min()) if len(df) > 0 else 0.0),
+        "total_span_s": float((df["t_actual_depart_s"].max() - df["t_actual_arrive_s"].min()) if len(df) > 0 else 0.0),
+        "total_clear_span_s": float((df["t_final_clear_s"].max() - df["t_actual_arrive_s"].min()) if len(df) > 0 else 0.0),
         "dwell_avg_s": float(df["t_dwell_s"].mean() if not df["t_dwell_s"].isna().all() else 0.0),
         "dwell_max_s": float(df["t_dwell_s"].max() if not df["t_dwell_s"].isna().all() else 0.0),
         "delay_arrive_avg_s": float(df["delay_arrive_s"].mean() if "delay_arrive_s" in df and not df["delay_arrive_s"].isna().all() else 0.0),
@@ -240,9 +354,11 @@ def calculate_summary_metrics(
         
         for e in events:
             if e.event_type.value == "route_acquired":
-                acquired_times[e.train_id] = e.t_event_s
-            elif e.event_type.value == "route_released" and e.train_id in acquired_times:
-                occupancies.append((acquired_times[e.train_id], e.t_event_s))
+                acquired_times[(e.train_id, e.route_id)] = e.t_event_s
+            elif e.event_type.value == "route_released":
+                key = (e.train_id, e.route_id)
+                if key in acquired_times:
+                    occupancies.append((acquired_times[key], e.t_event_s))
                 
         # Считаем объединение интервалов занятости
         if occupancies:
@@ -298,16 +414,6 @@ def calculate_summary_metrics(
         metrics["packet_integrity_ratio"] = float('nan')
         metrics["max_intra_packet_gap_s"] = 0.0
 
-    vc_gap_threshold_s = 120.0
-    try:
-        with open("simulation.yaml", "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip().startswith("vc_gap_threshold_s:"):
-                    vc_gap_threshold_s = float(line.split(":")[1].strip())
-                    break
-    except Exception:
-        pass
-        
     metrics["max_gap_exceeds_vc_threshold"] = bool(metrics["max_intra_packet_gap_s"] > vc_gap_threshold_s)
 
     # Специфические метрики
