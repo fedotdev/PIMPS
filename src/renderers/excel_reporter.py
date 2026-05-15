@@ -40,13 +40,13 @@ HEADER_COMMENTS = {
 
 
 SCENARIO_LABELS = {
-    "Baseline": "АБ — базовый режим",
-    "Demo-AB": "АБ — штатный пропуск",
-    "Demo-VC-A": "ВС — пакет А (2 поезда)",
-    "Demo-VC-B": "ВС — пакет Б (2 поезда)",
-    "AB-Recovery": "АБ — восстановление после задержки",
-    "VC-Recovery": "ВС — восстановление после задержки",
-    "VC-Packet-Split": "ВС — аварийное разделение пакета",
+    "Baseline": "АБ - базовый режим",
+    "Demo-AB": "АБ - штатный пропуск",
+    "Demo-VC-A": "ВС - пакет А (2 поезда)",
+    "Demo-VC-B": "ВС - пакет Б (2 поезда)",
+    "AB-Recovery": "АБ - восстановление после задержки",
+    "VC-Recovery": "ВС - восстановление после задержки",
+    "VC-Packet-Split": "ВС - аварийное разделение пакета",
 }
 
 SUMMARY_ORDER = [
@@ -201,7 +201,7 @@ def _write_methodology_sheet(ws: Any, results: dict[str, dict[str, float]], open
             _apply_throat_overload_style(ws, row_idx, openpyxl)
             if scenario == "VC-Packet-Split":
                 ws.cell(row=row_idx, column=1).comment = openpyxl.Comment(
-                    "Аварийный режим — разделение пакета ВС",
+                    "Аварийный режим - разделение пакета ВС",
                     "PIMPS",
                 )
         elif kind == "delta" and scenario is not None and base_scenario is not None:

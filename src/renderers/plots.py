@@ -23,13 +23,13 @@ __all__ = [
 # Единая цветовая палитра сценариев (используется во всех графиках)
 # ---------------------------------------------------------------------------
 SCENARIO_COLORS: dict[str, str] = {
-    "Demo-AB":         "#a5a5a5",  # серый        — базовый АБ
+    "Demo-AB":         "#a5a5a5",  # серый        - базовый АБ
     "Baseline":        "#c8c8c8",  # светло-серый
-    "Demo-VC-A":       "#5b9bd5",  # синий        — ВС методика А
-    "Demo-VC-B":       "#ed7d31",  # оранжевый    — ВС методика Б
-    "VC-Packet-Split": "#ffc000",  # жёлтый       — разделение пакета
-    "AB-Recovery":     "#b0b0b0",  # серый-2      — восстановление АБ
-    "VC-Recovery":     "#70ad47",  # зелёный      — восстановление ВС
+    "Demo-VC-A":       "#5b9bd5",  # синий        - ВС методика А
+    "Demo-VC-B":       "#ed7d31",  # оранжевый    - ВС методика Б
+    "VC-Packet-Split": "#ffc000",  # жёлтый       - разделение пакета
+    "AB-Recovery":     "#b0b0b0",  # серый-2      - восстановление АБ
+    "VC-Recovery":     "#70ad47",  # зелёный      - восстановление ВС
 }
 _DEFAULT_COLOR = "#4472c4"
 
@@ -41,18 +41,18 @@ _DEFAULT_COLOR = "#4472c4"
 _SCENARIO_DISPLAY_NAMES: dict[str, str] = {
     "Demo-AB":         "АБ (базовый)",
     "Baseline":        "АБ (базовый)",
-    "Demo-VC-A":       "ВС — Методика А",
-    "Demo-VC-B":       "ВС — Методика Б",
-    "VC-Packet-Split": "ВС — Разделение пакета",
-    "AB-Recovery":     "АБ — Восстановление",
-    "VC-Recovery":     "ВС — Восстановление",
+    "Demo-VC-A":       "ВС - Методика А",
+    "Demo-VC-B":       "ВС - Методика Б",
+    "VC-Packet-Split": "ВС - Разделение пакета",
+    "AB-Recovery":     "АБ - Восстановление",
+    "VC-Recovery":     "ВС - Восстановление",
 }
 
 
 def _get_scenario_display_name(scenario_id: str) -> str:
     """Возвращает читаемое название сценария для подписей осей и заголовков.
 
-    Если идентификатор отсутствует в словаре — возвращает его как есть,
+    Если идентификатор отсутствует в словаре - возвращает его как есть,
     заменяя дефисы на пробелы для минимальной читаемости.
     """
     return _SCENARIO_DISPLAY_NAMES.get(scenario_id, scenario_id.replace("-", " "))
@@ -105,7 +105,7 @@ _ROUTE_DISPLAY_NAMES: dict[str, str] = {
 def _get_route_display_name(route_id: str) -> str:
     """Возвращает читаемое название маршрута для подписей осей и заголовков.
 
-    Если route_id есть в словаре — возвращает готовую строку.
+    Если route_id есть в словаре - возвращает готовую строку.
     Иначе применяет эвристику: «route_X_Y» → «X → Y».
     """
     if route_id in _ROUTE_DISPLAY_NAMES:
@@ -141,7 +141,7 @@ def plot_physics_profile(
     out_path : Path | str
         Путь сохранения PNG.
     v_limit_kmh : float | None
-        Допустимая скорость (км/ч); если задана — отображается пунктиром.
+        Допустимая скорость (км/ч); если задана - отображается пунктиром.
     section_boundaries_m : list[float] | None
         Координаты (м) границ секций маршрута; рисуются вертикальными линиями.
     """
@@ -232,7 +232,7 @@ def plot_physics_profile(
 
 
 # ---------------------------------------------------------------------------
-# Диаграмма Ганта — занятость горловины
+# Диаграмма Ганта - занятость горловины
 # ---------------------------------------------------------------------------
 
 def plot_station_occupancy(
@@ -378,7 +378,7 @@ def plot_station_occupancy(
     ax.grid(True, axis="x", which="major", linestyle="--", alpha=0.5)
     ax.grid(True, axis="x", which="minor", linestyle=":", alpha=0.22)
 
-    # Вторая ось X — в минутах
+    # Вторая ось X - в минутах
     ax_min = ax.twiny()
     ax_min.set_xlim(x_min / 60.0, x_max / 60.0)
     ax_min.set_xlabel("Время, мин", fontsize=9, labelpad=4)
@@ -462,7 +462,7 @@ def plot_throughput_comparison(
 
 
 # ---------------------------------------------------------------------------
-# Сравнение методик А vs Б — два субплота (разные единицы)
+# Сравнение методик А vs Б - два субплота (разные единицы)
 # ---------------------------------------------------------------------------
 
 # Группа 1: безразмерные / процентные метрики
@@ -511,13 +511,13 @@ def _draw_bar_group(
     if vals_ab is not None:
         width = 0.24
         bars_ab = ax.bar(x - width,   vals_ab, width, label="АБ (базовый)",    color="#a5a5a5", edgecolor="black", linewidth=0.7)
-        bars_a  = ax.bar(x,           vals_a,  width, label="ВС — Методика А", color="#5b9bd5", edgecolor="black", linewidth=0.7)
-        bars_b  = ax.bar(x + width,   vals_b,  width, label="ВС — Методика Б", color="#ed7d31", edgecolor="black", linewidth=0.7)
+        bars_a  = ax.bar(x,           vals_a,  width, label="ВС - Методика А", color="#5b9bd5", edgecolor="black", linewidth=0.7)
+        bars_b  = ax.bar(x + width,   vals_b,  width, label="ВС - Методика Б", color="#ed7d31", edgecolor="black", linewidth=0.7)
         bar_groups = (bars_ab, bars_a, bars_b)
     else:
         width = 0.35
-        bars_a = ax.bar(x - width / 2, vals_a, width, label="ВС — Методика А", color="#5b9bd5", edgecolor="black", linewidth=0.7)
-        bars_b = ax.bar(x + width / 2, vals_b, width, label="ВС — Методика Б", color="#ed7d31", edgecolor="black", linewidth=0.7)
+        bars_a = ax.bar(x - width / 2, vals_a, width, label="ВС - Методика А", color="#5b9bd5", edgecolor="black", linewidth=0.7)
+        bars_b = ax.bar(x + width / 2, vals_b, width, label="ВС - Методика Б", color="#ed7d31", edgecolor="black", linewidth=0.7)
         bar_groups = (bars_a, bars_b)
 
     for bar_group in bar_groups:
@@ -548,8 +548,8 @@ def plot_methodology_comparison(
 ) -> None:
     """Строит двухпанельную диаграмму сравнения Методик А, Б и базового АБ.
 
-    Верхняя панель — пропускная способность и эффективностные показатели.
-    Нижняя панель  — временные метрики (интервалы, время занятия, разрывы).
+    Верхняя панель - пропускная способность и эффективностные показатели.
+    Нижняя панель  - временные метрики (интервалы, время занятия, разрывы).
     Разделение панелей необходимо: значения в п/ч и % несоизмеримы с секундами.
     """
     path = Path(out_path)
