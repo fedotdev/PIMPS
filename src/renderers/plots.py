@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -22,15 +23,81 @@ __all__ = [
 # Единая цветовая палитра сценариев (используется во всех графиках)
 # ---------------------------------------------------------------------------
 SCENARIO_COLORS: dict[str, str] = {
-    "Demo-AB":         "#a5a5a5",  # серый      — базовый АБ
+    "Demo-AB":         "#a5a5a5",  # серый        — базовый АБ
     "Baseline":        "#c8c8c8",  # светло-серый
-    "Demo-VC-A":       "#5b9bd5",  # синий      — ВС методика А
-    "Demo-VC-B":       "#ed7d31",  # оранжевый  — ВС методика Б
-    "VC-Packet-Split": "#ffc000",  # жёлтый     — разделение пакета
-    "AB-Recovery":     "#b0b0b0",  # серый-2    — восстановление АБ
-    "VC-Recovery":     "#70ad47",  # зелёный    — восстановление ВС
+    "Demo-VC-A":       "#5b9bd5",  # синий        — ВС методика А
+    "Demo-VC-B":       "#ed7d31",  # оранжевый    — ВС методика Б
+    "VC-Packet-Split": "#ffc000",  # жёлтый       — разделение пакета
+    "AB-Recovery":     "#b0b0b0",  # серый-2      — восстановление АБ
+    "VC-Recovery":     "#70ad47",  # зелёный      — восстановление ВС
 }
 _DEFAULT_COLOR = "#4472c4"
+
+# ---------------------------------------------------------------------------
+# Словарь отображаемых имён сценариев
+# Все функции графиков обязаны использовать _get_scenario_display_name()
+# вместо прямого вывода идентификатора сценария.
+# ---------------------------------------------------------------------------
+_SCENARIO_DISPLAY_NAMES: dict[str, str] = {
+    "Demo-AB":         "АБ (базовый)",
+    "Baseline":        "АБ (базовый)",
+    "Demo-VC-A":       "ВС — Методика А",
+    "Demo-VC-B":       "ВС — Методика Б",
+    "VC-Packet-Split": "ВС — Разделение пакета",
+    "AB-Recovery":     "АБ — Восстановление",
+    "VC-Recovery":     "ВС — Восстановление",
+}
+
+
+def _get_scenario_display_name(scenario_id: str) -> str:
+    """Возвращает читаемое название сценария для подписей осей и заголовков.
+
+    Если идентификатор отсутствует в словаре — возвращает его как есть,
+    заменяя дефисы на пробелы для минимальной читаемости.
+    """
+    return _SCENARIO_DISPLAY_NAMES.get(scenario_id, scenario_id.replace("-", " "))
+
+
+# ---------------------------------------------------------------------------
+# Словарь отображаемых имён маршрутов горловины
+# Формат ключей соответствует route_id из конфигурации сценария.
+# Правило именования: нечётная горловина (НГ) — приём/отправление,
+# чётная горловина (ЧГ) — приём/отправление; путь — номер пути.
+# ---------------------------------------------------------------------------
+_ROUTE_DISPLAY_NAMES: dict[str, str] = {
+    # Маршруты приёма (нечётная горловина → путь)
+    "route_N_1P":  "Приём: НГ → 1П",
+    "route_N_2P":  "Приём: НГ → 2П",
+    "route_N_3P":  "Приём: НГ → 3П",
+    "route_N_4P":  "Приём: НГ → 4П",
+    "route_N_5P":  "Приём: НГ → 5П",
+    # Маршруты отправления (путь → чётная горловина)
+    "route_1P_N":  "Отправление: 1П → ЧГ",
+    "route_2P_N":  "Отправление: 2П → ЧГ",
+    "route_3P_N":  "Отправление: 3П → ЧГ",
+    "route_4P_N":  "Отправление: 4П → ЧГ",
+    "route_5P_N":  "Отправление: 5П → ЧГ",
+    # Маршруты приёма (чётная горловина → путь)
+    "route_Ch_1P": "Приём: ЧГ → 1П",
+    "route_Ch_2P": "Приём: ЧГ → 2П",
+    "route_Ch_3P": "Приём: ЧГ → 3П",
+    # Маршруты сквозного прохода
+    "route_N_Ch":  "Сквозной: НГ → ЧГ",
+    "route_Ch_N":  "Сквозной: ЧГ → НГ",
+}
+
+
+def _get_route_display_name(route_id: str) -> str:
+    """Возвращает читаемое название маршрута для подписей осей и заголовков.
+
+    Если route_id есть в словаре — возвращает готовую строку.
+    Иначе применяет эвристику: «route_X_Y» → «X → Y».
+    """
+    if route_id in _ROUTE_DISPLAY_NAMES:
+        return _ROUTE_DISPLAY_NAMES[route_id]
+    # Эвристика для неизвестных идентификаторов
+    cleaned = re.sub(r"^route_", "", route_id)
+    return cleaned.replace("_", " → ")
 
 
 def _ensure_dir(path: Path) -> None:
@@ -122,12 +189,11 @@ def plot_physics_profile(
     )
     ax2.tick_params(axis="y", labelcolor=color_t)
 
-    # Заголовок
+    # Заголовок с читаемым именем маршрута
     t_min = physics.t_total_s / 60.0
-    # Человекочитаемое имя маршрута
-    route_display = physics.route_id.replace("route_", "").replace("_", " → ")
+    route_display = _get_route_display_name(physics.route_id)
     fig.suptitle(
-        f"Тяговый расчёт движения поезда",
+        "Тяговый расчёт движения поезда",
         fontsize=13, fontweight="bold", y=1.01,
     )
     ax1.set_title(
@@ -151,7 +217,7 @@ def plot_physics_profile(
 
 
 # ---------------------------------------------------------------------------
-# Диаграмма Ганта — занятость маршрутов
+# Диаграмма Ганта — занятость горловины
 # ---------------------------------------------------------------------------
 
 def plot_station_occupancy(
@@ -159,7 +225,7 @@ def plot_station_occupancy(
     scenario_name: str,
     out_path: Path | str,
 ) -> None:
-    """Строит диаграмму Ганта занятости маршрутов по времени."""
+    """Строит диаграмму Ганта занятости горловины (маршрутов приёма/отправления)."""
     if not events:
         logger.warning("Нет событий для отрисовки диаграммы Ганта.")
         return
@@ -239,14 +305,12 @@ def plot_station_occupancy(
     x_min = np.floor(time_start / major_step) * major_step
     x_max = np.ceil(time_end / major_step) * major_step
 
-    # Палитра Set2 — сдержанная и читаемая
     palette = list(plt.cm.Set2.colors)
     unique_trains = sorted(set(o["train_id"] for o in occupancies))
     train_color_map = {t: palette[i % len(palette)] for i, t in enumerate(unique_trains)}
 
     fig, ax = plt.subplots(figsize=(14, max(4, total_rendered_height * 1.3)))
 
-    # Фоновые полосы маршрутов
     for idx, layout in enumerate(route_layouts):
         band_color = "#f4f4f4" if idx % 2 else "#ffffff"
         ax.axhspan(
@@ -259,7 +323,6 @@ def plot_station_occupancy(
                 color="#d0d0d0", linewidth=0.8, zorder=1,
             )
 
-    # Блоки занятости
     for layout in route_layouts:
         for occ in layout["occs"]:
             color = train_color_map[occ["train_id"]]
@@ -271,7 +334,6 @@ def plot_station_occupancy(
                 facecolors=color, alpha=0.88,
                 edgecolor="#333333", linewidth=0.6, zorder=2,
             )
-            # Сокращённое имя поезда (последние 3 символа номера)
             short_id = occ["train_id"].split("-")[-1] if "-" in occ["train_id"] else occ["train_id"]
             text_x = occ["start"] + occ["duration"] / 2
             rotation = 90 if occ["duration"] < 45 else 0
@@ -285,14 +347,15 @@ def plot_station_occupancy(
     ax.set_ylim(-route_gap / 2, total_rendered_height + route_gap / 2)
     ax.set_xlim(x_min, x_max)
     ax.set_yticks([layout["center_y"] for layout in route_layouts])
+    # Используем _get_route_display_name для читаемых подписей оси Y
     ax.set_yticklabels(
-        [layout["route"].replace("route_", "").replace("_", " → ") for layout in route_layouts],
+        [_get_route_display_name(layout["route"]) for layout in route_layouts],
         fontsize=9,
     )
     ax.set_xticks(np.arange(x_min, x_max + major_step * 0.5, major_step))
     ax.set_xticks(np.arange(x_min, x_max + minor_step * 0.5, minor_step), minor=True)
     ax.set_xlabel("Время, с", fontsize=10)
-    ax.set_ylabel("Маршруты", fontsize=10)
+    ax.set_ylabel("Маршрут горловины", fontsize=10)
     ax.tick_params(axis="y", length=0, pad=8)
     ax.tick_params(axis="x", which="major", length=5)
     ax.tick_params(axis="x", which="minor", length=3)
@@ -306,12 +369,12 @@ def plot_station_occupancy(
     ax_min.set_xlabel("Время, мин", fontsize=9, labelpad=4)
     ax_min.tick_params(axis="x", labelsize=8)
 
-    # Итог в заголовке
     n_trains = len(unique_trains)
     duration_min = time_span / 60.0
+    scenario_display = _get_scenario_display_name(scenario_name)
     ax.set_title(
-        f"Диаграмма занятости маршрутов\n"
-        f"Сценарий: {scenario_name}   |   Поездов: {n_trains}   |   "
+        f"Занятость горловины: диаграмма использования секций\n"
+        f"Сценарий: {scenario_display}   |   Поездов: {n_trains}   |   "
         f"Продолжительность: {duration_min:.1f} мин",
         fontsize=11, fontweight="bold", pad=12,
     )
@@ -340,9 +403,11 @@ def plot_throughput_comparison(
     scenarios = list(scenario_metrics.keys())
     throughput = [scenario_metrics[s].get("throughput_trains_per_hour", 0.0) for s in scenarios]
     bar_colors = [SCENARIO_COLORS.get(s, _DEFAULT_COLOR) for s in scenarios]
+    # Читаемые имена для оси X
+    display_names = [_get_scenario_display_name(s) for s in scenarios]
 
-    fig, ax = plt.subplots(figsize=(max(9, len(scenarios) * 1.4), 6))
-    bars = ax.bar(scenarios, throughput, color=bar_colors, edgecolor="black", linewidth=0.8, zorder=3)
+    fig, ax = plt.subplots(figsize=(max(9, len(scenarios) * 1.6), 6))
+    bars = ax.bar(display_names, throughput, color=bar_colors, edgecolor="black", linewidth=0.8, zorder=3)
 
     # Горизонтальная линия базового АБ
     ab_val = None
@@ -359,8 +424,8 @@ def plot_throughput_comparison(
 
     ax.set_ylabel("Пропускная способность, поездов/ч", fontsize=10)
     ax.set_title("Сравнение пропускной способности по сценариям", fontsize=12, fontweight="bold")
-    ax.set_xticks(range(len(scenarios)))
-    ax.set_xticklabels(scenarios, rotation=20, ha="right", fontsize=9)
+    ax.set_xticks(range(len(display_names)))
+    ax.set_xticklabels(display_names, rotation=20, ha="right", fontsize=9)
     ax.grid(True, axis="y", linestyle="--", alpha=0.5, zorder=0)
     ax.set_axisbelow(True)
 
@@ -392,11 +457,14 @@ _COMPARE_KEYS_PERC = [
     ("packet_integrity_pct",       "Сохранность\nпакетов, %"),
 ]
 
-# Группа 2: временны́е метрики (с)
+# Группа 2: временные метрики (с)
+# Термины скорректированы согласно нормативной терминологии:
+# - «время занятия маршрута» вместо «ожидание маршрута»
+# - «макс. интервал внутри пакета» вместо «задержка разделения»
 _COMPARE_KEYS_TIME = [
     ("headway_avg_s",          "Ср. интервал\nотправл., с"),
-    ("mean_wait_time_s",       "Ср. ожидание\nмаршрута, с"),
-    ("max_intra_packet_gap_s", "Макс. разрыв\nв пакете, с"),
+    ("mean_wait_time_s",       "Ср. время занятия\nмаршрута, с"),
+    ("max_intra_packet_gap_s", "Макс. интервал\nвнутри пакета, с"),
 ]
 
 
@@ -427,9 +495,9 @@ def _draw_bar_group(
 
     if vals_ab is not None:
         width = 0.24
-        bars_ab = ax.bar(x - width,       vals_ab, width, label="АБ (базовый)",  color="#a5a5a5", edgecolor="black", linewidth=0.7)
-        bars_a  = ax.bar(x,               vals_a,  width, label="ВС — Методика А", color="#5b9bd5", edgecolor="black", linewidth=0.7)
-        bars_b  = ax.bar(x + width,       vals_b,  width, label="ВС — Методика Б", color="#ed7d31", edgecolor="black", linewidth=0.7)
+        bars_ab = ax.bar(x - width,   vals_ab, width, label="АБ (базовый)",    color="#a5a5a5", edgecolor="black", linewidth=0.7)
+        bars_a  = ax.bar(x,           vals_a,  width, label="ВС — Методика А", color="#5b9bd5", edgecolor="black", linewidth=0.7)
+        bars_b  = ax.bar(x + width,   vals_b,  width, label="ВС — Методика Б", color="#ed7d31", edgecolor="black", linewidth=0.7)
         bar_groups = (bars_ab, bars_a, bars_b)
     else:
         width = 0.35
@@ -466,7 +534,7 @@ def plot_methodology_comparison(
     """Строит двухпанельную диаграмму сравнения Методик А, Б и базового АБ.
 
     Верхняя панель — пропускная способность и эффективностные показатели.
-    Нижняя панель  — временны́е метрики (интервалы, ожидание, разрыв).
+    Нижняя панель  — временные метрики (интервалы, время занятия, разрывы).
     Разделение панелей необходимо: значения в п/ч и % несоизмеримы с секундами.
     """
     path = Path(out_path)
@@ -505,7 +573,7 @@ def plot_methodology_comparison(
         ylabel="Время, с",
     )
     ax_bot.set_title(
-        "Временны́е показатели (интервалы, ожидание, разрывы)",
+        "Временные показатели: интервалы, время занятия маршрута, разрывы в пакете",
         fontsize=11, fontweight="bold", pad=8,
     )
 
