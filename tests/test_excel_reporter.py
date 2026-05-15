@@ -92,7 +92,7 @@ def test_export_xlsx_summary_and_methodology_layout(tmp_path: Path) -> None:
         for row_idx in range(3, methodology.max_row + 1)
         if methodology.cell(row=row_idx, column=1).value in _sample_results()
     }
-    assert source_codes == set(_sample_results())
+    assert source_codes == set(_sample_results()) - {"Demo-AB", "Demo-VC-B"}
 
     delta_rows = [
         row_idx
@@ -107,6 +107,13 @@ def test_export_xlsx_summary_and_methodology_layout(tmp_path: Path) -> None:
         if all(methodology.cell(row=row_idx, column=col_idx).value is None for col_idx in range(1, 16))
     ]
     assert len(blank_rows) == 2
+    nonblank_body_rows = [
+        row_idx
+        for row_idx in range(3, methodology.max_row + 1)
+        if any(methodology.cell(row=row_idx, column=col_idx).value is not None for col_idx in range(1, 16))
+    ]
+    assert len(nonblank_body_rows) == 8
+    assert methodology.max_row - 2 == 10
 
     recovery_col = _column_by_header(methodology, "Время восстановления")
     vc_recovery_row = _row_by_code(methodology, "VC-Recovery")

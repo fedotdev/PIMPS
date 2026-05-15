@@ -20,6 +20,24 @@ RED_FILL = "F4CCCC"
 MEDIUM_GREY = "808080"
 THROAT_COMMENT = "Коэф. > 1.0 означает наличие очереди на горловину (перегрузка)"
 
+HEADER_COMMENTS = {
+    "scenario": "Внутренний машинный код сценария, используемый в результатах моделирования.",
+    "display_name": "Человекочитаемое название сценария для итогового отчёта.",
+    "trains_total": "Количество поездов, обработанных в сценарии.",
+    "throughput_trains_per_hour": "Пропускная способность: число поездов за расчётный интервал, пересчитанное в поезда в час.",
+    "headway_avg_s": "Средний интервал попутного следования между отправлениями поездов.",
+    "dwell_avg_s": "Среднее время стоянки поездов на станции.",
+    "throat_utilization": THROAT_COMMENT,
+    "mean_travel_time_s": "Среднее полное время нахождения поезда в модели станции.",
+    "mean_wait_times_s": "Среднее время ожидания маршрута по событиям симуляции.",
+    "recovery_times": "Время восстановления графика после нарушения движения.",
+    "cascade_delays": "Суммарная каскадная задержка поездов после нарушения движения.",
+    "packet_integrity_ratio": "Доля пакетов виртуальной сцепки, сохранивших целостность.",
+    "max_intrapacket_gap_s": "Максимальный интервал между поездами внутри пакета ВС.",
+    "delay_arrive_avg_s": "Среднее опоздание прибытия относительно планового времени.",
+    "delay_depart_avg_s": "Среднее опоздание отправления относительно планового времени.",
+}
+
 
 SCENARIO_LABELS = {
     "Baseline": "АБ — базовый режим",
@@ -148,8 +166,8 @@ def _write_summary_sheet(ws: Any, results: dict[str, dict[str, float]], openpyxl
         _apply_throat_overload_style(ws, row_idx, openpyxl)
         row_idx += 1
 
-    throat_col = _column_index("throat_utilization")
-    ws.cell(row=1, column=throat_col).comment = openpyxl.Comment(THROAT_COMMENT, "PIMPS")
+    for col_idx, (metric_key, _, _, _) in enumerate(METRIC_COLUMNS, start=1):
+        ws.cell(row=1, column=col_idx).comment = openpyxl.Comment(HEADER_COMMENTS[metric_key], "PIMPS")
     _auto_fit_columns(ws, openpyxl)
 
 
@@ -159,9 +177,7 @@ def _write_methodology_sheet(ws: Any, results: dict[str, dict[str, float]], open
 
     rows: list[tuple[str, str | None, str | None]] = [
         ("source", "Baseline", None),
-        ("source", "Demo-AB", None),
         ("source", "Demo-VC-A", None),
-        ("source", "Demo-VC-B", None),
         ("delta", "Demo-VC-A", "Baseline"),
         ("blank", None, None),
         ("source", "AB-Recovery", None),
@@ -172,7 +188,7 @@ def _write_methodology_sheet(ws: Any, results: dict[str, dict[str, float]], open
         ("delta", "VC-Packet-Split", "Demo-VC-A"),
     ]
 
-    block_starts = {3, 9, 13}
+    block_starts = {3, 7, 11}
     row_idx = 3
     for kind, scenario, base_scenario in rows:
         if kind == "blank":
@@ -203,7 +219,9 @@ def _write_charts_sheet(ws: Any, output_dir: Path, openpyxl: Any) -> None:
     image_specs = [
         ("methodology_comparison_chart*.png", False, None),
         ("occupancy_Demo-VC-A*.png", False, None),
+        ("occupancy_Demo-VC-A*.jpg", False, None),
         ("occupancy_Demo-VC-B*.png", False, None),
+        ("occupancy_Demo-VC-B*.jpg", False, None),
     ]
 
     for pattern, single, label in image_specs:
@@ -215,13 +233,12 @@ def _write_charts_sheet(ws: Any, output_dir: Path, openpyxl: Any) -> None:
     profile_images = sorted(set(profile_images))
     if not profile_images:
         logger.warning("Изображение профиля тяги не найдено: profile_AB-Recovery_Freight-401*.png/jpg")
-        return
-
-    ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=2)
-    label_cell = ws.cell(row=current_row, column=1, value=profile_label)
-    label_cell.font = openpyxl.Font(bold=True)
-    current_row += 1
-    _insert_image(ws, profile_images[0], f"A{current_row}", openpyxl)
+    else:
+        ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=2)
+        label_cell = ws.cell(row=current_row, column=1, value=profile_label)
+        label_cell.font = openpyxl.Font(bold=True)
+        current_row += 1
+        _insert_image(ws, profile_images[0], f"A{current_row}", openpyxl)
 
 
 def _insert_images_for_pattern(
