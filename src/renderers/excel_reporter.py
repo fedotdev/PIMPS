@@ -42,8 +42,8 @@ HEADER_COMMENTS = {
 SCENARIO_LABELS = {
     "Baseline": "АБ - базовый режим",
     "Demo-AB": "АБ - штатный пропуск",
-    "Demo-VC-A": "ВС - пакет А (2 поезда)",
-    "Demo-VC-B": "ВС - пакет Б (2 поезда)",
+    "Demo-VC-A": "ВС - Методика А",
+    "Demo-VC-B": "ВС - Методика Б",
     "AB-Recovery": "АБ - восстановление после задержки",
     "VC-Recovery": "ВС - восстановление после задержки",
     "VC-Packet-Split": "ВС - аварийное разделение пакета",
@@ -161,8 +161,6 @@ def _write_summary_sheet(ws: Any, results: dict[str, dict[str, float]], openpyxl
     row_idx = 3
     for scenario in _ordered_scenarios(results):
         _write_metric_row(ws, row_idx, scenario, results[scenario], openpyxl)
-        if scenario == "VC-Packet-Split":
-            _fill_row(ws, row_idx, EMERGENCY_FILL, openpyxl)
         _apply_throat_overload_style(ws, row_idx, openpyxl)
         row_idx += 1
 
