@@ -102,6 +102,11 @@ def _route_line_ids(station_raw: dict[str, Any], route_id: str) -> list[str]:
         raw_lines = route.get("lines") or []
         if not isinstance(raw_lines, list) or not all(isinstance(line_id, str) for line_id in raw_lines):
             raise ConfigError(f"Маршрут '{route_id}' должен содержать список строковых id в поле 'lines'.")
+        if not raw_lines:
+            raise ConfigError(
+                f"Маршрут '{route_id}' содержит пустой список lines: "
+                "добавьте физические линии или укажите маршрут корректно."
+            )
         return cast(list[str], raw_lines)
 
     raise ConfigError(f"Маршрут '{route_id}' не найден в station_yaml['routes'].")

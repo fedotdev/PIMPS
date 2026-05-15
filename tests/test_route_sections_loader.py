@@ -43,4 +43,4 @@ def test_load_route_sections_uses_station_line_profile() -> None:
     assert sections_by_id["l_sw1_sigN1"].radius == 0.0
 
     branch_sections = load_route_sections(station_yaml, ["l_sigN_sw7"])
-    assert branch_sections[0].radius == 300.0
+    assert branch_sections[0].radius == 200.0
