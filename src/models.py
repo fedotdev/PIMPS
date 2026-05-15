@@ -243,6 +243,15 @@ class RouteConfig:
 
 
 @dataclass
+class JointConfig:
+    """Стык путевого развития станции."""
+    joint_id: str
+    kind: str = ""
+    interval_base_min: float = 0.0
+    interval_vc_min: float = 0.0
+
+
+@dataclass
 class StationConfig:
     """Конфигурация станции, загруженная из YAML."""
     station_id: str
@@ -250,6 +259,7 @@ class StationConfig:
     routes: dict[str, RouteConfig]
     switches: dict[str, SwitchConfig]
     extra_conflicts: list[tuple[str, str]] = field(default_factory=list)
+    joints: dict[str, JointConfig] = field(default_factory=dict)
 
 
 @dataclass

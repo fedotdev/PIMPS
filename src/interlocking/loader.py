@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 
 from src.models import (
+    JointConfig,
     RouteConfig,
     RouteType,
     StationConfig,
@@ -54,6 +55,7 @@ def load_station(path: Path | str) -> StationConfig:
     switches = _parse_switches(raw, path)
     routes = _parse_routes(raw, switches, path)
     extra_conflicts = _parse_extra_conflicts(raw, set(routes.keys()), path)
+    joints = _parse_joints(raw, path)
 
     logger.debug(
         "Станция '%s': %d стрелок, %d маршрутов, %d доп. конфликтов",
@@ -76,6 +78,7 @@ def load_station(path: Path | str) -> StationConfig:
         switches=switches,
         routes=routes,
         extra_conflicts=extra_conflicts,
+        joints=joints,
     )
 
 
@@ -318,6 +321,59 @@ def _parse_station_meta(raw: dict[str, Any], path: Path) -> tuple[str, str]:
         f"Отсутствуют обязательные поля станции ('station_id'/'name' "
         f"или 'station.id'/'station.name') в файле {path}"
     )
+
+
+def _parse_joints(raw: dict[str, Any], path: Path) -> dict[str, JointConfig]:
+    """Разбирает секцию 'joints' YAML-конфига."""
+    raw_joints = raw.get("joints") or []
+    joints: dict[str, JointConfig] = {}
+
+    for idx, item in enumerate(raw_joints):
+        joint_id = item.get("joint_id") or item.get("id")
+        if not joint_id:
+            raise StationConfigError(
+                f"Стык #{idx}: отсутствует поле 'joint_id'/'id' ({path})"
+            )
+        if joint_id in joints:
+            raise StationConfigError(
+                f"Дублирующийся joint_id '{joint_id}' в файле {path}"
+            )
+
+        interval_base_min = _parse_nonnegative_float(
+            item.get("interval_base_min", 0.0),
+            f"Стык '{joint_id}': interval_base_min",
+            path,
+        )
+        interval_vc_min = _parse_nonnegative_float(
+            item.get("interval_vc_min", 0.0),
+            f"Стык '{joint_id}': interval_vc_min",
+            path,
+        )
+
+        joints[joint_id] = JointConfig(
+            joint_id=joint_id,
+            kind=str(item.get("kind", "")),
+            interval_base_min=interval_base_min,
+            interval_vc_min=interval_vc_min,
+        )
+
+    logger.debug("Разобрано %d стыков", len(joints))
+    return joints
+
+
+def _parse_nonnegative_float(raw_value: Any, field_name: str, path: Path) -> float:
+    """Преобразует неотрицательное конечное число из YAML."""
+    if not isinstance(raw_value, (int, float)):
+        raise StationConfigError(
+            f"{field_name} должно быть числом, получено {raw_value!r} ({path})"
+        )
+    value = float(raw_value)
+    if not (math.isfinite(value) and value >= 0):
+        raise StationConfigError(
+            f"{field_name} должно быть конечным неотрицательным числом, "
+            f"получено {value} ({path})"
+        )
+    return value
 
 
 def _normalize_route_type(raw_type: Any) -> Any:

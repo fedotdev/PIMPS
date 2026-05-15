@@ -110,6 +110,26 @@ class TestLoadStationSuccess:
         assert len(config.extra_conflicts) == 1
         assert config.extra_conflicts[0] == ("R1", "R2")
 
+    def test_joints_intervals_parsed(self, write_yaml):
+        """Нормативные интервалы ПТР на стыках корректно разбираются."""
+        yaml_text = """\
+        station_id: ST_J
+        name: Со стыками
+        joints:
+          - id: ep_A
+            kind: entry_point
+            interval_base_min: 8.0
+            interval_vc_min: 4.5
+        switches: []
+        routes: []
+        """
+        config = load_station(write_yaml(yaml_text))
+
+        joint = config.joints["ep_A"]
+        assert joint.kind == "entry_point"
+        assert joint.interval_base_min == 8.0
+        assert joint.interval_vc_min == 4.5
+
     def test_default_values(self, write_yaml):
         """Значения по умолчанию: transfer_time_s=4.0, v_limit=60.0."""
         yaml_text = """\

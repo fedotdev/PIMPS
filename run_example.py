@@ -193,6 +193,16 @@ def build_recovery_entries(
     ]
 
 
+def _get_normative_intervals_s(station_config) -> tuple[float, float]:
+    """Возвращает нормативные интервалы ПТР для АБ и ВС в секундах."""
+    for joint in station_config.joints.values():
+        if joint.kind == "entry_point" and (joint.interval_base_min > 0 or joint.interval_vc_min > 0):
+            return joint.interval_base_min * 60.0, joint.interval_vc_min * 60.0
+
+    logger.warning("Нормативные интервалы ПТР не найдены в стыках станции.")
+    return 0.0, 0.0
+
+
 def run_scenario(
     station_config,
     train,
@@ -365,6 +375,7 @@ def main() -> None:
     locomotive     = load_locomotive(Path("config/2ES5k.yaml"))
     train          = load_train(locomotive, Path("config/demo_train.yaml"))
     traction_cache = TractionCache()
+    norm_ab_interval_s, norm_vc_interval_s = _get_normative_intervals_s(station_config)
 
     output_dir = Path("output")
     data_dir = output_dir / "data"
@@ -379,7 +390,7 @@ def main() -> None:
         entries=entries_ab, scenario_name="Demo-AB",
         control_mode=ControlMode.AB, vc_methodology="A",
         vc_min_headway_s=AB_INTERVAL_S, output_dir=output_dir,
-        planned_interval_s=AB_INTERVAL_S,
+        planned_interval_s=norm_ab_interval_s,
     )
 
     # Сценарий 2 — ВС Методика А
@@ -388,7 +399,7 @@ def main() -> None:
         entries=entries_vc, scenario_name="Demo-VC-A",
         control_mode=ControlMode.VC, vc_methodology="A",
         vc_min_headway_s=VC_MIN_HEADWAY_S, output_dir=output_dir,
-        planned_interval_s=INTRA_INTERVAL_S,
+        planned_interval_s=norm_vc_interval_s,
     )
 
     # Сценарий 3 — ВС Методика Б
@@ -397,7 +408,7 @@ def main() -> None:
         entries=entries_vc, scenario_name="Demo-VC-B",
         control_mode=ControlMode.VC, vc_methodology="B",
         vc_min_headway_s=VC_MIN_HEADWAY_S, output_dir=output_dir,
-        planned_interval_s=INTRA_INTERVAL_S,
+        planned_interval_s=norm_vc_interval_s,
     )
 
     # Сценарий — Разделение пакета
@@ -407,7 +418,7 @@ def main() -> None:
         entries=entries_split, scenario_name="VC-Packet-Split",
         control_mode=ControlMode.VC, vc_methodology="A",
         vc_min_headway_s=180.0, output_dir=output_dir,
-        planned_interval_s=180.0,
+        planned_interval_s=norm_vc_interval_s,
     )
 
     # Сценарий 4 — Восстановление графика
@@ -419,14 +430,14 @@ def main() -> None:
         entries=entries_rec_ab, scenario_name="AB-Recovery",
         control_mode=ControlMode.AB, vc_methodology="A",
         vc_min_headway_s=AB_INTERVAL_S, output_dir=output_dir,
-        planned_interval_s=AB_INTERVAL_S,
+        planned_interval_s=norm_ab_interval_s,
     )
     _, _, metrics_rec_vc = run_scenario(
         station_config=station_config, train=train, traction_cache=traction_cache,
         entries=entries_rec_vc, scenario_name="VC-Recovery",
         control_mode=ControlMode.VC, vc_methodology="A",
         vc_min_headway_s=180.0, output_dir=output_dir,
-        planned_interval_s=180.0,
+        planned_interval_s=norm_vc_interval_s,
     )
 
     # Сборные метрики всех сценариев (без дублей — только именованные сценарии)
@@ -441,7 +452,11 @@ def main() -> None:
 
     # Графики и экспорт
     export_scenario_comparison(scenario_metrics, data_dir / "throughput_comparison.csv")
-    plot_throughput_comparison(scenario_metrics, output_dir / "throughput_benchmark.png")
+    plot_throughput_comparison(
+        scenario_metrics,
+        output_dir / "throughput_benchmark.png",
+        normative_interval_s=norm_ab_interval_s,
+    )
     if metrics_vc_a and metrics_vc_b:
         plot_methodology_comparison(
             metrics_a=metrics_vc_a,

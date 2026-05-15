@@ -57,6 +57,9 @@ def generate_markdown_report(
         f"- **Принято поездов:** {int(metrics.get('trains_total', len(results)))}",
         f"- **Пропускная способность:** {metrics.get('throughput_trains_per_hour', 0):.2f} поездов/час",
         f"- **Средний интервал отправления (headway):** {metrics.get('headway_avg_s', 0):.1f} с",
+        f"- **Нормативный интервал (ПТР):** {metrics.get('normative_interval_s', 0) / 60:.1f} мин "
+        f"({metrics.get('normative_interval_s', 0):.0f} с)",
+        f"- **Headway / норматив:** {metrics.get('headway_vs_normative_pct', float('nan')):.1f} %",
         f"- **Среднее суммарное ожидание:** {metrics.get('mean_wait_time_s', 0):.1f} с",
         f"- **Ожидание маршрута прибытия:** {metrics.get('wait_arrival_route_avg_s', 0):.1f} с",
         f"- **Ожидание маршрута отправления:** {metrics.get('wait_departure_route_avg_s', 0):.1f} с",
@@ -391,6 +394,13 @@ def calculate_summary_metrics(
                 t_recover = departs[recovered_idx] if recovered_idx != -1 else departs[-1]
                 metrics["recovery_time_s"] = float(t_recover - t_fault)
 
+    metrics["normative_interval_s"] = planned_interval_s
+    metrics["headway_vs_normative_pct"] = (
+        (metrics["headway_avg_s"] / planned_interval_s - 1.0) * 100.0
+        if planned_interval_s > 0 and metrics["headway_avg_s"] == metrics["headway_avg_s"]
+        else float("nan")
+    )
+
     return metrics
 
 
@@ -409,7 +419,8 @@ def export_scenario_comparison(
 
     cols = [
         "scenario", "trains_total", "throughput_trains_per_hour",
-        "headway_avg_s", "dwell_avg_s", "throat_utilization",
+        "headway_avg_s", "normative_interval_s", "headway_vs_normative_pct",
+        "dwell_avg_s", "throat_utilization",
         "packet_integrity_ratio", "max_intra_packet_gap_s",
         "max_gap_exceeds_vc_threshold",
         "max_queue_length", "packet_split_delay_s",
@@ -438,6 +449,8 @@ _ZERO_HIDE_KEYS = {
 _COMPARISON_METRICS = [
     ("throughput_trains_per_hour",   "Пропускная способность",                        "поезд/ч", ".2f"),
     ("headway_avg_s",                "Средний интервал отправления",                   "с",       ".1f"),
+    ("normative_interval_s",         "Норматив. интервал (ПТР)",                       "с",       ".0f"),
+    ("headway_vs_normative_pct",     "Headway / норматив",                             "%",       "+.1f"),
     ("mean_wait_time_s",             "Среднее время ожидания маршрута",                "с",       ".1f"),
     ("throat_utilization",           "Суммарная загрузка маршрутов горловины",         "%",       ".1%"),
     ("packet_integrity_ratio",       "Сохранённость пакетов",                          "%",       ".0%"),

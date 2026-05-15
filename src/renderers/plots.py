@@ -407,8 +407,13 @@ def plot_station_occupancy(
 def plot_throughput_comparison(
     scenario_metrics: dict[str, dict[str, float]],
     out_path: Path | str,
+    normative_interval_s: float = 0.0,
 ) -> None:
-    """Строит столбчатую диаграмму сравнения пропускной способности сценариев."""
+    """Строит столбчатую диаграмму сравнения пропускной способности сценариев.
+
+    При заданном нормативном интервале ПТР дополнительно отображает
+    соответствующую горизонтальную линию пропускной способности.
+    """
     if not scenario_metrics:
         return
 
@@ -435,6 +440,29 @@ def plot_throughput_comparison(
             ab_val, color="#555555", linestyle="--", linewidth=1.5,
             label=f"Базовый АБ ({ab_val:.1f} п/ч)", zorder=2,
         )
+
+    if normative_interval_s > 0:
+        norm_tph = 3600.0 / normative_interval_s
+        ax.axhline(
+            norm_tph,
+            color="#c0392b",
+            linestyle=":",
+            linewidth=1.4,
+            label=f"Норматив ПТР  ({normative_interval_s / 60:.1f} мин = {norm_tph:.1f} п/ч)",
+            zorder=2,
+        )
+        y_offset = 0.3 if ab_val is not None and abs(norm_tph - ab_val) < 0.5 else 0.0
+        ax.text(
+            -0.45,
+            norm_tph + y_offset,
+            f"Норматив ПТР: {norm_tph:.1f} п/ч",
+            ha="left",
+            va="bottom",
+            fontsize=8,
+            color="#c0392b",
+        )
+
+    if ab_val or normative_interval_s > 0:
         ax.legend(fontsize=9, framealpha=0.85)
 
     ax.set_ylabel("Пропускная способность, поездов/ч", fontsize=10)
