@@ -5,10 +5,21 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, cast
+
+import yaml
 
 from src.interlocking.engine import InterlockingEngine
 from src.interlocking.loader import load_station
-from src.models import ScenarioEntry, RouteSection, ControlMode, SimResult, StationEvent, VCMethodology
+from src.models import (
+    ControlMode,
+    RouteSection,
+    ScenarioEntry,
+    SimResult,
+    StationEvent,
+    TrainConfig,
+    VCMethodology,
+)
 from src.renderers.metrics import (
     calculate_summary_metrics,
     export_sim_results,
@@ -26,7 +37,12 @@ from src.renderers.plots import (
 )
 from src.simulation import SimulationEngine
 from src.traction.dynamics import TractionCache
-from src.traction.loader import load_locomotive, load_train
+from src.traction.loader import (
+    ConfigError,
+    load_locomotive,
+    load_route_sections,
+    load_train,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -43,46 +59,66 @@ logger = logging.getLogger("pimps_demo")
 TRACK_LENGTH_M  = 850.0
 THROAT_NGP_M    = 150.0
 THROAT_CHG_M    = 150.0
+_DEFAULT_STATION_RAW: dict[str, Any] | None = None
 
 
-def get_arr_sections(track_id: int) -> list[RouteSection]:
-    """Секции маршрута прибытия: входная горловина → станционный путь.
-
-    0 → THROAT_NGP_M                       : горловина НГП
-    THROAT_NGP_M → THROAT_NGP_M + TRACK_LENGTH_M : тело пути
-    """
-    return [
-        RouteSection(
-            section_id="STR_ENTER",
-            s_start=0.0, s_end=THROAT_NGP_M,
-            grade=0.0, radius=300.0, v_limit=40.0,
-        ),
-        RouteSection(
-            section_id=f"TRK_P{track_id}",
-            s_start=THROAT_NGP_M, s_end=THROAT_NGP_M + TRACK_LENGTH_M,
-            grade=-3.5, radius=0.0, v_limit=40.0,
-        ),
-    ]
+def _read_station_yaml(path: Path) -> dict[str, Any]:
+    """Читает исходный YAML станции для физических линий маршрутов."""
+    with path.open(encoding="utf-8") as fh:
+        data = yaml.safe_load(fh)
+    if not isinstance(data, dict):
+        raise ConfigError(f"Корень YAML станции должен быть словарём: {path}")
+    return cast(dict[str, Any], data)
 
 
-def get_dep_sections(track_id: int) -> list[RouteSection]:
-    """Секции маршрута отправления: тело пути → выходная горловина ЧГП.
+def _station_raw_or_default(station_raw: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Возвращает переданный YAML станции или лениво читает штатный файл демо."""
+    if station_raw is not None:
+        return station_raw
 
-    0 → TRACK_LENGTH_M                      : тело пути
-    TRACK_LENGTH_M → TRACK_LENGTH_M + THROAT_CHG_M : горловина ЧГП
-    """
-    return [
-        RouteSection(
-            section_id=f"TRK_P{track_id}",
-            s_start=0.0, s_end=TRACK_LENGTH_M,
-            grade=3.5, radius=0.0, v_limit=40.0,
-        ),
-        RouteSection(
-            section_id="STR_EXIT",
-            s_start=TRACK_LENGTH_M, s_end=TRACK_LENGTH_M + THROAT_CHG_M,
-            grade=0.0, radius=300.0, v_limit=40.0,
-        ),
-    ]
+    global _DEFAULT_STATION_RAW
+    station = _DEFAULT_STATION_RAW
+    if station is None:
+        station = _read_station_yaml(Path("stations/miitovskaya_station.yaml"))
+        _DEFAULT_STATION_RAW = station
+    return station
+
+
+def _route_line_ids(station_raw: dict[str, Any], route_id: str) -> list[str]:
+    """Возвращает упорядоченный список физических линий маршрута из station_yaml['routes']."""
+    raw_routes = station_raw.get("routes") or []
+    if not isinstance(raw_routes, list):
+        raise ConfigError("station_yaml['routes'] должен быть списком маршрутов.")
+
+    for idx, raw_route in enumerate(raw_routes):
+        if not isinstance(raw_route, dict):
+            raise ConfigError(f"routes[{idx}] должен быть словарём параметров маршрута.")
+
+        route = cast(dict[str, Any], raw_route)
+        raw_route_id = route.get("route_id") or route.get("id")
+        if raw_route_id != route_id:
+            continue
+
+        raw_lines = route.get("lines") or []
+        if not isinstance(raw_lines, list) or not all(isinstance(line_id, str) for line_id in raw_lines):
+            raise ConfigError(f"Маршрут '{route_id}' должен содержать список строковых id в поле 'lines'.")
+        return cast(list[str], raw_lines)
+
+    raise ConfigError(f"Маршрут '{route_id}' не найден в station_yaml['routes'].")
+
+
+def get_arr_sections(track_id: int, station_raw: dict[str, Any] | None = None) -> list[RouteSection]:
+    """Секции маршрута прибытия из физических линий станционного YAML."""
+    station_raw = _station_raw_or_default(station_raw)
+    route_id = ARRIVAL_ROUTE_BY_TRACK[track_id]
+    return load_route_sections(station_raw, _route_line_ids(station_raw, route_id))
+
+
+def get_dep_sections(track_id: int, station_raw: dict[str, Any] | None = None) -> list[RouteSection]:
+    """Секции маршрута отправления из физических линий станционного YAML."""
+    station_raw = _station_raw_or_default(station_raw)
+    route_id = DEPARTURE_ROUTE_BY_TRACK[track_id]
+    return load_route_sections(station_raw, _route_line_ids(station_raw, route_id))
 
 
 # ---------------------------------------------------------------------------
@@ -113,9 +149,10 @@ INTER_PLATOON_GAP_S = 300.0
 
 
 def build_vc_entries(
-    train,
+    train: TrainConfig,
     intra_interval_s: float,
     platoon_mode: bool = True,
+    station_raw: dict[str, Any] | None = None,
 ) -> list[ScenarioEntry]:
     """Формирует расписание: 8 поездов, 3 пакета (3+3+2).
 
@@ -133,46 +170,50 @@ def build_vc_entries(
                 t_arrive_s=platoon_start + j * intra_interval_s,
                 route_id=ARRIVAL_ROUTE_BY_TRACK[track_id],
                 train=train,
-                sections=get_arr_sections(track_id),
+                sections=get_arr_sections(track_id, station_raw),
                 v0_kmh=40.0,
                 dwell_s=120.0,
                 platoon_id=platoon_id if platoon_mode else None,
                 departure_route_id=DEPARTURE_ROUTE_BY_TRACK[track_id],
-                departure_sections=get_dep_sections(track_id),
+                departure_sections=get_dep_sections(track_id, station_raw),
             ))
         platoon_start += INTER_PLATOON_GAP_S
 
     return entries
 
 
-def build_packet_split_entries(train) -> list[ScenarioEntry]:
+def build_packet_split_entries(
+    train: TrainConfig,
+    station_raw: dict[str, Any] | None = None,
+) -> list[ScenarioEntry]:
     """СЦЕНАРИЙ 3: ВС с разделением пакета на подходе (3 поезда, интервал 180 с)."""
     return [
         ScenarioEntry(
             train_id="Freight-301", t_arrive_s=0,
-            route_id="route_N_2P", train=train, sections=get_arr_sections(2),
+            route_id="route_N_2P", train=train, sections=get_arr_sections(2, station_raw),
             v0_kmh=40.0, dwell_s=120.0, platoon_id="PLT-SPLIT",
-            departure_route_id="route_2P_B", departure_sections=get_dep_sections(2),
+            departure_route_id="route_2P_B", departure_sections=get_dep_sections(2, station_raw),
         ),
         ScenarioEntry(
             train_id="Freight-302", t_arrive_s=180,
-            route_id="route_N_3P", train=train, sections=get_arr_sections(3),
+            route_id="route_N_3P", train=train, sections=get_arr_sections(3, station_raw),
             v0_kmh=40.0, dwell_s=120.0, platoon_id="PLT-SPLIT",
-            departure_route_id="route_3P_B", departure_sections=get_dep_sections(3),
+            departure_route_id="route_3P_B", departure_sections=get_dep_sections(3, station_raw),
         ),
         ScenarioEntry(
             train_id="Freight-303", t_arrive_s=360,
-            route_id="route_N_2P", train=train, sections=get_arr_sections(2),
+            route_id="route_N_2P", train=train, sections=get_arr_sections(2, station_raw),
             v0_kmh=40.0, dwell_s=120.0, platoon_id="PLT-SPLIT",
-            departure_route_id="route_2P_B", departure_sections=get_dep_sections(2),
+            departure_route_id="route_2P_B", departure_sections=get_dep_sections(2, station_raw),
         ),
     ]
 
 
 def build_recovery_entries(
-    train,
+    train: TrainConfig,
     interval_s: float,
     platoon_mode: bool,
+    station_raw: dict[str, Any] | None = None,
 ) -> list[ScenarioEntry]:
     """СЦЕНАРИЙ 4: восстановление графика после сбоя.
 
@@ -184,9 +225,9 @@ def build_recovery_entries(
         ScenarioEntry(
             train_id=f"Freight-40{i}",
             t_arrive_s=(i - 1) * interval_s,
-            route_id="route_N_2P", train=train, sections=get_arr_sections(2),
+            route_id="route_N_2P", train=train, sections=get_arr_sections(2, station_raw),
             v0_kmh=40.0, dwell_s=120.0, platoon_id=pid,
-            departure_route_id="route_2P_B", departure_sections=get_dep_sections(2),
+            departure_route_id="route_2P_B", departure_sections=get_dep_sections(2, station_raw),
             delay_s=delays.get(i, 0.0),
         )
         for i in range(1, 7)
@@ -371,7 +412,9 @@ AB_INTERVAL_S    = 360.0
 def main() -> None:
     logger.info("Инициализация данных...")
 
-    station_config = load_station(Path("stations/miitovskaya_station.yaml"))
+    station_path    = Path("stations/miitovskaya_station.yaml")
+    station_raw     = _read_station_yaml(station_path)
+    station_config  = load_station(station_path)
     locomotive     = load_locomotive(Path("config/2ES5k.yaml"))
     train          = load_train(locomotive, Path("config/demo_train.yaml"))
     traction_cache = TractionCache()
@@ -381,8 +424,16 @@ def main() -> None:
     data_dir = output_dir / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    entries_ab = build_vc_entries(train, AB_INTERVAL_S,    platoon_mode=False)
-    entries_vc = build_vc_entries(train, INTRA_INTERVAL_S, platoon_mode=True)
+    entries_ab = build_vc_entries(
+        train, AB_INTERVAL_S,
+        platoon_mode=False,
+        station_raw=station_raw,
+    )
+    entries_vc = build_vc_entries(
+        train, INTRA_INTERVAL_S,
+        platoon_mode=True,
+        station_raw=station_raw,
+    )
 
     # Сценарий 1 — АБ
     _, _, metrics_ab = run_scenario(
@@ -412,7 +463,7 @@ def main() -> None:
     )
 
     # Сценарий — Разделение пакета
-    entries_split = build_packet_split_entries(train)
+    entries_split = build_packet_split_entries(train, station_raw=station_raw)
     _, _, metrics_split = run_scenario(
         station_config=station_config, train=train, traction_cache=traction_cache,
         entries=entries_split, scenario_name="VC-Packet-Split",
@@ -422,8 +473,18 @@ def main() -> None:
     )
 
     # Сценарий 4 — Восстановление графика
-    entries_rec_ab = build_recovery_entries(train, interval_s=AB_INTERVAL_S, platoon_mode=False)
-    entries_rec_vc = build_recovery_entries(train, interval_s=180.0, platoon_mode=True)
+    entries_rec_ab = build_recovery_entries(
+        train,
+        interval_s=AB_INTERVAL_S,
+        platoon_mode=False,
+        station_raw=station_raw,
+    )
+    entries_rec_vc = build_recovery_entries(
+        train,
+        interval_s=180.0,
+        platoon_mode=True,
+        station_raw=station_raw,
+    )
 
     _, _, metrics_rec_ab = run_scenario(
         station_config=station_config, train=train, traction_cache=traction_cache,

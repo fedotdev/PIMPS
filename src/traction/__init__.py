@@ -30,13 +30,14 @@ from src.traction.dynamics import (
     head_to_tail_profile,
     solve_route,
 )
-from src.traction.loader import load_train
+from src.traction.loader import load_route_sections, load_train
 
 __all__ = [
     "DriveMode",
     "TractionCache",
     "apply_speed_limit",
     "head_to_tail_profile",
+    "load_route_sections",
     "load_train",
     "solve_route",
 ]

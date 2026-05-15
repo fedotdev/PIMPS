@@ -7,15 +7,25 @@
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import yaml
 
-from src.models import CurrentType, LocomotiveConfig, TrainConfig
+from src.models import CurrentType, LocomotiveConfig, RouteSection, TrainConfig
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "ConfigError",
+    "LocomotiveConfigError",
+    "TrainConfigError",
+    "load_locomotive",
+    "load_route_sections",
+    "load_train",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +145,53 @@ def load_train(
         train.num_wagons, train.train_mass_t, train.train_length_m,
     )
     return train
+
+
+def load_route_sections(
+    station_yaml: dict[str, Any],
+    line_ids: list[str],
+    s_offset: float = 0.0,
+) -> list[RouteSection]:
+    """
+    Собирает физические секции маршрута RouteSection из блока lines[] станционного YAML.
+
+    Для каждого line_id берутся length_m, grade, radius и speed_limit_kmh, после чего
+    координаты s_start/s_end считаются накопительно от s_offset.
+    """
+    lines_by_id = _station_lines_by_id(station_yaml)
+    s_start = _parse_finite_float(s_offset, "s_offset")
+    sections: list[RouteSection] = []
+
+    for line_id in line_ids:
+        if line_id not in lines_by_id:
+            raise ConfigError(
+                f"Линия '{line_id}' не найдена в station_yaml['lines']; "
+                "ожидалась существующая физическая линия маршрута."
+            )
+
+        raw_line = lines_by_id[line_id]
+        length_m = _parse_positive_float(raw_line.get("length_m"), f"lines[{line_id}].length_m")
+        grade = _parse_finite_float(raw_line.get("grade", 0.0), f"lines[{line_id}].grade")
+        radius = _parse_nonnegative_float(raw_line.get("radius", 0.0), f"lines[{line_id}].radius")
+        v_limit = _parse_positive_float(
+            raw_line.get("speed_limit_kmh", 120.0),
+            f"lines[{line_id}].speed_limit_kmh",
+        )
+        s_end = s_start + length_m
+
+        sections.append(
+            RouteSection(
+                section_id=line_id,
+                s_start=s_start,
+                s_end=s_end,
+                grade=grade,
+                radius=radius,
+                v_limit=v_limit,
+            )
+        )
+        s_start = s_end
+
+    return sections
 
 
 # ---------------------------------------------------------------------------
@@ -357,6 +414,54 @@ def _parse_wagon_brake_curve(
 # ---------------------------------------------------------------------------
 # Утилиты
 # ---------------------------------------------------------------------------
+
+def _station_lines_by_id(station_yaml: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Возвращает индекс lines[] по id линии станционного YAML."""
+    raw_lines = station_yaml.get("lines") or []
+    if not isinstance(raw_lines, list):
+        raise ConfigError("station_yaml['lines'] должен быть списком линий.")
+
+    lines_by_id: dict[str, dict[str, Any]] = {}
+    for idx, raw_line in enumerate(raw_lines):
+        if not isinstance(raw_line, dict):
+            raise ConfigError(f"lines[{idx}] должен быть словарём параметров линии.")
+
+        line = cast(dict[str, Any], raw_line)
+        raw_line_id = line.get("id")
+        if not isinstance(raw_line_id, str) or not raw_line_id:
+            raise ConfigError(f"lines[{idx}]: отсутствует строковое поле 'id'.")
+        if raw_line_id in lines_by_id:
+            raise ConfigError(f"Дублирующийся id линии '{raw_line_id}' в station_yaml['lines'].")
+
+        lines_by_id[raw_line_id] = line
+
+    return lines_by_id
+
+
+def _parse_finite_float(raw_value: Any, field_name: str) -> float:
+    """Преобразует конечное числовое значение YAML в float."""
+    if not isinstance(raw_value, (int, float)):
+        raise ConfigError(f"{field_name} должен быть числом, получено {raw_value!r}.")
+    value = float(raw_value)
+    if not math.isfinite(value):
+        raise ConfigError(f"{field_name} должен быть конечным числом, получено {value}.")
+    return value
+
+
+def _parse_positive_float(raw_value: Any, field_name: str) -> float:
+    """Преобразует положительное конечное числовое значение YAML в float."""
+    value = _parse_finite_float(raw_value, field_name)
+    if value <= 0.0:
+        raise ConfigError(f"{field_name} должен быть положительным числом, получено {value}.")
+    return value
+
+
+def _parse_nonnegative_float(raw_value: Any, field_name: str) -> float:
+    """Преобразует неотрицательное конечное числовое значение YAML в float."""
+    value = _parse_finite_float(raw_value, field_name)
+    if value < 0.0:
+        raise ConfigError(f"{field_name} должен быть неотрицательным числом, получено {value}.")
+    return value
 
 def _read_yaml(
     path: Path | str,

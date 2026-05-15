@@ -902,6 +902,17 @@ routes:
       - sec_track_1P
       - sec_throat_CHG_main
       - sec_approach_B
+    lines:
+      - l_ep_A_sigN
+      - l_sigN_sw1
+      - l_sw1_sigN1
+      - l_sigN1_buf1P_w
+      - l_track_1P
+      - l_track_1P_sw10
+      - l_sw10_sigCH1
+      - l_sigCH1_sw2
+      - l_sw2_sigCH
+      - l_sigCH_ep_B
     switches:
       - {id: sw1, position: plus}
       - {id: sw2, position: plus}
@@ -920,6 +931,12 @@ routes:
       - sec_approach_A
       - sec_throat_NGP_main
       - sec_track_1P
+    lines:
+      - l_ep_A_sigN
+      - l_sigN_sw1
+      - l_sw1_sigN1
+      - l_sigN1_buf1P_w
+      - l_track_1P
     switches:
       - {id: sw1, position: plus}
 
@@ -934,6 +951,13 @@ routes:
       - sec_approach_A
       - sec_throat_NGP_branch
       - sec_track_2P
+    lines:
+      - l_ep_A_sigN
+      - l_sigN_sw1
+      - l_sw1_sw3
+      - l_sw3_sigN2
+      - l_sigN2_buf2P_w
+      - l_track_2P
     switches:
       - {id: sw1, position: minus}
       - {id: sw3, position: plus}
@@ -949,6 +973,14 @@ routes:
       - sec_approach_A
       - sec_throat_NGP_branch
       - sec_track_3P
+    lines:
+      - l_ep_A_sigN
+      - l_sigN_sw1
+      - l_sw1_sw3
+      - l_sw3_sw5
+      - l_sw5_sigN3
+      - l_sigN3_buf3P_w
+      - l_track_3P
     switches:
       - {id: sw1, position: minus}
       - {id: sw3, position: minus}
@@ -965,6 +997,14 @@ routes:
       - sec_approach_A
       - sec_throat_NGP_branch
       - sec_track_5P
+    lines:
+      - l_ep_A_sigN
+      - l_sigN_sw1
+      - l_sw1_sw3
+      - l_sw3_sw5
+      - l_sw5_sigN5
+      - l_sigN5_buf5P_w
+      - l_track_5P
     switches:
       - {id: sw1, position: minus}
       - {id: sw3, position: minus}
@@ -1146,6 +1186,13 @@ routes:
       - sec_track_1P
       - sec_throat_CHG_main
       - sec_approach_B
+    lines:
+      - l_track_1P
+      - l_track_1P_sw10
+      - l_sw10_sigCH1
+      - l_sigCH1_sw2
+      - l_sw2_sigCH
+      - l_sigCH_ep_B
     switches:
       - {id: sw2, position: plus}
 
@@ -1160,6 +1207,14 @@ routes:
       - sec_track_2P
       - sec_throat_CHG_branch
       - sec_approach_B
+    lines:
+      - l_track_2P
+      - l_track_2P_sw12
+      - l_sw12_sigCH2
+      - l_sigCH2_sw6
+      - l_sw6_sw2
+      - l_sw2_sigCH
+      - l_sigCH_ep_B
     switches:
       - {id: sw6, position: plus}
       - {id: sw2, position: minus}
@@ -1175,6 +1230,14 @@ routes:
       - sec_track_3P
       - sec_throat_CHG_branch
       - sec_approach_B
+    lines:
+      - l_track_3P
+      - l_buf3P_e_sigCH3
+      - l_sigCH3_sw8
+      - l_sw8_sw4
+      - l_sw4_sw2
+      - l_sw2_sigCH
+      - l_sigCH_ep_B
     switches:
       - {id: sw8, position: plus}
       - {id: sw4, position: minus}
@@ -1191,6 +1254,14 @@ routes:
       - sec_track_5P
       - sec_throat_CHG_branch
       - sec_approach_B
+    lines:
+      - l_track_5P
+      - l_buf5P_e_sigCH5
+      - l_sigCH5_sw8
+      - l_sw8_sw4
+      - l_sw4_sw2
+      - l_sw2_sigCH
+      - l_sigCH_ep_B
     switches:
       - {id: sw8, position: minus}
       - {id: sw4, position: minus}
