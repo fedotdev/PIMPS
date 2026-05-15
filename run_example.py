@@ -232,12 +232,11 @@ def run_scenario(
     profiles_dir = output_dir / "profiles"
     data_dir     = output_dir / "data"
     station_dir  = output_dir / "station"
-    summary_dir  = output_dir / "summary"
-    for d in (profiles_dir, data_dir, station_dir, summary_dir):
+    for d in (profiles_dir, data_dir, station_dir):
         d.mkdir(parents=True, exist_ok=True)
 
     export_sim_results(results, data_dir / f"sim_results_{scenario_name}.csv")
-    export_events_log(events,   station_dir / f"events_log_{scenario_name}.csv")
+    export_events_log(events,   data_dir / f"events_log_{scenario_name}.csv")
     export_delays_table(results, data_dir / f"delays_{scenario_name}.csv")
 
     metrics = calculate_summary_metrics(
@@ -367,9 +366,9 @@ def main() -> None:
     train          = load_train(locomotive, Path("config/demo_train.yaml"))
     traction_cache = TractionCache()
 
-    output_dir  = Path("output")
-    summary_dir = output_dir / "summary"
-    summary_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = Path("output")
+    data_dir = output_dir / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
 
     entries_ab = build_vc_entries(train, AB_INTERVAL_S,    platoon_mode=False)
     entries_vc = build_vc_entries(train, INTRA_INTERVAL_S, platoon_mode=True)
@@ -441,14 +440,14 @@ def main() -> None:
     }
 
     # Графики и экспорт
-    export_scenario_comparison(scenario_metrics, summary_dir / "throughput_comparison.csv")
-    plot_throughput_comparison(scenario_metrics, summary_dir / "throughput_benchmark.png")
+    export_scenario_comparison(scenario_metrics, data_dir / "throughput_comparison.csv")
+    plot_throughput_comparison(scenario_metrics, output_dir / "throughput_benchmark.png")
     if metrics_vc_a and metrics_vc_b:
         plot_methodology_comparison(
             metrics_a=metrics_vc_a,
             metrics_b=metrics_vc_b,
             metrics_ab=metrics_ab,
-            out_path=summary_dir / "methodology_comparison_chart.png",
+            out_path=output_dir / "methodology_comparison_chart.png",
         )
     export_xlsx(scenario_metrics, output_dir)
 
@@ -469,10 +468,10 @@ def main() -> None:
             "data":     "output/data",
             "station":  "output/station",
             "profiles": "output/profiles",
-            "summary":  "output/summary",
+            "root":     "output",
         },
     }
-    with open(summary_dir / "run_manifest.json", "w", encoding="utf-8") as f:
+    with open(data_dir / "run_manifest.json", "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
 
     # Оформленная итоговая таблица
@@ -482,7 +481,7 @@ def main() -> None:
     logger.info("  • Данные CSV:      output/data/")
     logger.info("  • Диаграммы Ганта:  output/station/")
     logger.info("  • Тяговые профили: output/profiles/")
-    logger.info("  • Сводные графики: output/summary/")
+    logger.info("  • Сводные графики: output/")
     logger.info("  • Excel-отчёт:    output/simulation_results.xlsx")
 
 

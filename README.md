@@ -44,10 +44,10 @@
 
 - CSV по каждому поезду: времена прибытия/отправления, время хода, средняя и максимальная скорость (`sim_results_*.csv`).
 - Задержки относительно плановых времён (`delays_*.csv`).
-- Лог событий станции (`events_log_*.csv`).
-- Сводная таблица `throughput_comparison.csv` по всем запущенным сценариям.
+- Лог событий станции (`data/events_log_*.csv`).
+- Сводная таблица `data/throughput_comparison.csv` по всем запущенным сценариям.
 - Графики: профили движения, диаграммы занятости маршрутов, сравнение пропускной способности.
-- Markdown-отчёты `report_<scenario>.md`.
+- Единый Excel-отчёт `simulation_results.xlsx`.
 
 ---
 
@@ -162,10 +162,12 @@ PIMPS/
 │   └── test_simulation.py
 │
 └── output/                     # Генерируется при запуске
-    ├── data/                   #   CSV с профилями и результатами
+    ├── data/                   #   CSV/JSON: результаты, события, манифест, сравнения
     ├── profiles/               #   PNG-графики V(S), T(S)
     ├── station/                #   Диаграммы занятости маршрутов
-    └── summary/                #   throughput_comparison, отчёты, графики
+    ├── methodology_comparison_chart.png
+    ├── throughput_benchmark.png
+    └── simulation_results.xlsx
 ```
 
 ---
