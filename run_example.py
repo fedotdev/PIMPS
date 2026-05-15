@@ -286,12 +286,12 @@ def run_scenario(
 # ---------------------------------------------------------------------------
 
 _SUMMARY_ROWS = [
-    ("throughput_trains_per_hour", "Пропускная способность, п/ч",  ".2f"),
-    ("headway_avg_s",              "Ср. интервал отправл., с",        ".1f"),
-    ("mean_wait_time_s",           "Ср. ожидание маршрута, с",      ".1f"),
-    ("delay_depart_avg_s",         "Ср. задержка отправл., с",      ".1f"),
-    ("throat_utilization",         "Использование горловины",        ".1%"),
-    ("packet_integrity_ratio",     "Сохранность пакетов",             ".0%"),
+    ("throughput_trains_per_hour", "Пропускная способность, п/ч",       ".2f"),
+    ("headway_avg_s",              "Ср. интервал отправл., с",           ".1f"),
+    ("mean_wait_time_s",           "Ср. ожидание маршрута, с",          ".1f"),
+    ("delay_depart_avg_s",         "Ср. задержка отправл., с",          ".1f"),
+    ("throat_utilization",         "Загрузка маршрутов горловины",       ".1%"),
+    ("packet_integrity_ratio",     "Сохранность пакетов",                ".0%"),
 ]
 
 
@@ -328,13 +328,14 @@ def _print_summary_table(
 
     print("╞" + "═" * W + "╡")
     print("│" + " Дополнительные сценарии:".ljust(W) + "│")
+    print("│" + " (↓ — улучшение относительно АБ-базы)".ljust(W) + "│")
 
     extra_keys = [
-        ("VC-Packet-Split", "Сценарий №у035 (разделение пакета)",
+        ("VC-Packet-Split", "Сценарий: разделение пакета ВС",
           "packet_split_delay_s",  "задержка разделения",  ".1f"),
-        ("AB-Recovery",     "Сценарий №44 АБ (восстановление)",
+        ("AB-Recovery",     "Сценарий: восстановление АБ",
           "recovery_time_s",       "время восстановления",    ".1f"),
-        ("VC-Recovery",     "Сценарий №44 ВС (восстановление)",
+        ("VC-Recovery",     "Сценарий: восстановление ВС",
           "recovery_time_s",       "время восстановления",    ".1f"),
     ]
     for sc_key, sc_label, metric_key, metric_label, fmt in extra_keys:
@@ -342,6 +343,9 @@ def _print_summary_table(
         val = m.get(metric_key, float("nan"))
         print("│" + f"  {sc_label:<42} {metric_label}: {_fv(val, fmt):>8} с".ljust(W) + "│")
 
+    print("╞" + "═" * W + "╡")
+    print("│" + " Примечание: загрузка горловины >100% — норма при пакетном движении".ljust(W) + "│")
+    print("│" + " (одновременно задействованы несколько параллельных маршрутов).".ljust(W) + "│")
     print("└" + "─" * W + "┘")
     print()
 
@@ -426,7 +430,7 @@ def main() -> None:
         planned_interval_s=180.0,
     )
 
-    # Сборные метрики всех сценариев
+    # Сборные метрики всех сценариев (без дублей — только именованные сценарии)
     scenario_metrics: dict[str, dict[str, float]] = {
         "Demo-AB":         metrics_ab,
         "Demo-VC-A":       metrics_vc_a,
