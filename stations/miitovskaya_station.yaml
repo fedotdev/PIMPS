@@ -340,6 +340,32 @@ switches:
     side_l: 19.3
     side_direction: left
 
+  - id: sw10
+    note: Стрелка №10 ЧГП — съезд 1П/2П, главный ход (1/18)
+    x: 960
+    y: 0
+    tg_alpha: "1/18"
+    rail_type: P65
+    switch_time_s: 5
+    drive: emd
+    main_1_l: 18.95
+    main_2_l: 18.95
+    side_l: 25.0
+    side_direction: right
+
+  - id: sw12
+    note: Стрелка №12 ЧГП — съезд 1П/2П, боковое (1/11)
+    x: 960
+    y: -5.3
+    tg_alpha: "1/11"
+    rail_type: P65
+    switch_time_s: 4
+    drive: emd
+    main_1_l: 14.06
+    main_2_l: 14.06
+    side_l: 19.3
+    side_direction: left
+
 switch_groups:
   # НГП: блокируются только реально зависимые стрелки
   - id: sg_ngp_main
@@ -357,12 +383,18 @@ switch_groups:
     note: Главный ход ЧГП (1П)
     switches:
       - sw2
+      - sw10
   - id: sg_chgp_branch
     note: Боковые пути ЧГП (2П, 3П, 5П)
     switches:
       - sw4
       - sw6
       - sw8
+  - id: sg_chgp_crossover
+    note: Манёвровый съезд ЧГП (1П↔2П)
+    switches:
+      - sw10
+      - sw12
 
 lines:
   # --- Подходы ---
@@ -400,7 +432,7 @@ lines:
     to:   {id: sw7, leg: main_1}
     length_m: 100
     grade: +1.5  # ‰
-    radius: 200  # м (0 = прямой)
+    radius: 300  # м (0 = прямой)
     speed_limit_kmh: 40
 
   # sw1: main_2 → sw3 (боковые пути через sw3)
@@ -410,7 +442,7 @@ lines:
     to:   {id: sw3, leg: main_1}
     length_m: 40
     grade: +1.5  # ‰
-    radius: 200  # м (0 = прямой)
+    radius: 300  # м (0 = прямой)
     speed_limit_kmh: 40
 
   # sw7: вариантный обход — main_2 → sw3 side, side → улавливающий тупик
@@ -420,7 +452,7 @@ lines:
     to:   {id: sw3, leg: side}
     length_m: 40
     grade: +1.5  # ‰
-    radius: 200  # м (0 = прямой)
+    radius: 300  # м (0 = прямой)
     speed_limit_kmh: 40
 
   - id: l_sw7_catch
@@ -429,7 +461,7 @@ lines:
     to:   {id: j_buf_catch_N2P}
     length_m: 30
     grade: +1.5  # ‰
-    radius: 200  # м (0 = прямой)
+    radius: 300  # м (0 = прямой)
     speed_limit_kmh: 40
 
   # sw3: разветвление 2П / группа 3П–5П
@@ -439,7 +471,7 @@ lines:
     to:   {id: j_sig_N2}
     length_m: 80
     grade: +1.5  # ‰
-    radius: 200  # м (0 = прямой)
+    radius: 300  # м (0 = прямой)
     speed_limit_kmh: 40
 
   - id: l_sw3_sw5
@@ -448,7 +480,7 @@ lines:
     to:   {id: sw5, leg: main_1}
     length_m: 40
     grade: +1.5  # ‰
-    radius: 200  # м (0 = прямой)
+    radius: 300  # м (0 = прямой)
     speed_limit_kmh: 40
 
   # sw5: разветвление 3П / 5П
@@ -458,7 +490,7 @@ lines:
     to:   {id: j_sig_N3}
     length_m: 80
     grade: +1.5  # ‰
-    radius: 200  # м (0 = прямой)
+    radius: 300  # м (0 = прямой)
     speed_limit_kmh: 40
 
   - id: l_sw5_sigN5
@@ -467,7 +499,7 @@ lines:
     to:   {id: j_sig_N5}
     length_m: 80
     grade: +1.5  # ‰
-    radius: 200  # м (0 = прямой)
+    radius: 300  # м (0 = прямой)
     speed_limit_kmh: 40
 
   # sw1: main_2 (главный ход 1П) → сигнал Н1
@@ -555,22 +587,49 @@ lines:
     speed_limit_kmh: 40
 
   # --- Предельный столбик (восточный конец) → маршрутный светофор ЧГП ---
-  - id: l_buf1P_e_sigCH1
-    note: Предельный столбик 1П (восток) → Ч1
+  - id: l_track_1P_sw10
+    note: Предельный столбик 1П (восток) → sw10
     from: {id: j_buf_1P_east}
+    to:   {id: sw10, leg: main_1}
+    length_m: 10
+    grade: -1.5  # ‰
+    radius: 0    # м (0 = прямой)
+    speed_limit_kmh: 80
+
+  - id: l_sw10_sigCH1
+    note: sw10 (main_2) → Ч1
+    from: {id: sw10, leg: main_2}
     to:   {id: j_sig_CH1}
     length_m: 10
     grade: -1.5  # ‰
-    radius: 0  # м (0 = прямой)
+    radius: 0    # м (0 = прямой)
     speed_limit_kmh: 80
 
-  - id: l_buf2P_e_sigCH2
-    note: Предельный столбик 2П (восток) → Ч2
+  - id: l_track_2P_sw12
+    note: Предельный столбик 2П (восток) → sw12
     from: {id: j_buf_2P_east}
+    to:   {id: sw12, leg: main_1}
+    length_m: 10
+    grade: -1.5  # ‰
+    radius: 0    # м (0 = прямой)
+    speed_limit_kmh: 40
+
+  - id: l_sw12_sigCH2
+    note: sw12 (main_2) → Ч2
+    from: {id: sw12, leg: main_2}
     to:   {id: j_sig_CH2}
     length_m: 10
     grade: -1.5  # ‰
-    radius: 0  # м (0 = прямой)
+    radius: 0    # м (0 = прямой)
+    speed_limit_kmh: 40
+
+  - id: l_sw10_sw12_crossover
+    note: Перемычка съезда 1П↔2П (sw10 side → sw12 side)
+    from: {id: sw10, leg: side}
+    to:   {id: sw12, leg: side}
+    length_m: 30
+    grade: -1.5  # ‰
+    radius: 300  # м (0 = прямой) — боковое 1/11
     speed_limit_kmh: 40
 
   - id: l_buf3P_e_sigCH3
@@ -607,7 +666,7 @@ lines:
     to:   {id: sw6, leg: main_1}
     length_m: 80
     grade: -1.5  # ‰
-    radius: 200  # м (0 = прямой)
+    radius: 300  # м (0 = прямой)
     speed_limit_kmh: 40
 
   - id: l_sigCH3_sw8
@@ -616,7 +675,7 @@ lines:
     to:   {id: sw8, leg: main_1}
     length_m: 80
     grade: -1.5  # ‰
-    radius: 200  # м (0 = прямой)
+    radius: 300  # м (0 = прямой)
     speed_limit_kmh: 40
 
   - id: l_sigCH5_sw8
@@ -625,7 +684,7 @@ lines:
     to:   {id: sw8, leg: side}
     length_m: 80
     grade: -1.5  # ‰
-    radius: 200  # м (0 = прямой)
+    radius: 300  # м (0 = прямой)
     speed_limit_kmh: 40
 
   # sw8: съезд 3П/5П → sw4
@@ -635,7 +694,7 @@ lines:
     to:   {id: sw4, leg: main_1}
     length_m: 40
     grade: -1.5  # ‰
-    radius: 200  # м (0 = прямой)
+    radius: 300  # м (0 = прямой)
     speed_limit_kmh: 40
 
   # sw4: разветвление группы 3П–5П / главный ход
@@ -645,7 +704,7 @@ lines:
     to:   {id: sw2, leg: side}
     length_m: 40
     grade: -1.5  # ‰
-    radius: 200  # м (0 = прямой)
+    radius: 300  # м (0 = прямой)
     speed_limit_kmh: 40
 
   # sw6: разветвление 2П / группа 3П–5П
@@ -655,7 +714,7 @@ lines:
     to:   {id: sw2, leg: main_1}
     length_m: 40
     grade: -1.5  # ‰
-    radius: 200  # м (0 = прямой)
+    radius: 300  # м (0 = прямой)
     speed_limit_kmh: 40
 
   - id: l_sw6_sw4
@@ -664,7 +723,7 @@ lines:
     to:   {id: sw4, leg: side}
     length_m: 40
     grade: -1.5  # ‰
-    radius: 200  # м (0 = прямой)
+    radius: 300  # м (0 = прямой)
     speed_limit_kmh: 40
 
   - id: l_sw6_catch
@@ -673,7 +732,7 @@ lines:
     to:   {id: j_buf_catch_CH6}
     length_m: 30
     grade: -1.5  # ‰
-    radius: 200  # м (0 = прямой)
+    radius: 300  # м (0 = прямой)
     speed_limit_kmh: 40
 
   # sw2: main_2 → входной светофор Ч
@@ -753,7 +812,9 @@ sections:
   - id: sec_throat_CHG_main
     note: Горловина ЧГП — главный ход 1П (sw2)
     elements:
-      - l_buf1P_e_sigCH1
+      - l_track_1P_sw10
+      - sw10
+      - l_sw10_sigCH1
       - j_sig_CH1
       - l_sigCH1_sw2
       - sw2
@@ -764,7 +825,9 @@ sections:
   - id: sec_throat_CHG_branch
     note: Горловина ЧГП — боковые пути 2П/3П/5П (sw4, sw6, sw8)
     elements:
-      - l_buf2P_e_sigCH2
+      - l_track_2P_sw12
+      - sw12
+      - l_sw12_sigCH2
       - j_sig_CH2
       - l_sigCH2_sw6
       - sw6
