@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Пример запуска симуляции PIMPS: сценарии АБ и ВС (Методики А и Б)."""
 import json
 import logging
@@ -14,9 +16,8 @@ from src.renderers.metrics import (
     export_delays_table,
     export_physics_data,
     export_scenario_comparison,
-    generate_markdown_report,
-    generate_methodology_comparison_report,
 )
+from src.renderers.excel_reporter import export_xlsx
 from src.renderers.plots import (
     plot_physics_profile, 
     plot_station_occupancy, 
@@ -298,9 +299,6 @@ def run_scenario(
     # Графики станции
     plot_station_occupancy(events, scenario_name, station_dir / f"occupancy_{scenario_name}.png")
 
-    # Markdown-отчёт
-    generate_markdown_report(results, metrics, summary_dir / f"report_{scenario_name}.md")
-
     # Профили тяги (по одному на уникальную комбинацию consist + route)
     seen_profiles: set[str] = set()
     for r in results:
@@ -451,12 +449,13 @@ def main():
     # Сравнение сценариев
     # =========================================================
     scenario_metrics = {
-        "АБ (Baseline)": metrics_ab,
-        "ВС — Методика А": metrics_vc_a,
-        "ВС — Методика Б": metrics_vc_b,
-        "ВС — Packet Split": metrics_split,
-        "АБ — Recovery": metrics_rec_ab,
-        "ВС — Recovery": metrics_rec_vc,
+        "Baseline": dict(metrics_ab),
+        "Demo-AB": metrics_ab,
+        "Demo-VC-A": metrics_vc_a,
+        "Demo-VC-B": metrics_vc_b,
+        "VC-Packet-Split": metrics_split,
+        "AB-Recovery": metrics_rec_ab,
+        "VC-Recovery": metrics_rec_vc,
     }
 
     export_scenario_comparison(scenario_metrics, summary_dir / "throughput_comparison.csv")
@@ -483,12 +482,6 @@ def main():
     with open(summary_dir / "run_manifest.json", "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
     
-    # Расширенный отчёт Методика А vs Методика Б
-    generate_methodology_comparison_report(
-        metrics_a=metrics_vc_a, 
-        metrics_b=metrics_vc_b, 
-        out_path=summary_dir / "methodology_comparison_report.md"
-    )
     if metrics_vc_a and metrics_vc_b:
         plot_methodology_comparison(
             metrics_a=metrics_vc_a,
@@ -496,6 +489,7 @@ def main():
             metrics_ab=metrics_ab,
             out_path=summary_dir / "methodology_comparison_chart.png",
         )
+    export_xlsx(scenario_metrics, output_dir)
 
     logger.info("=" * 60)
     logger.info("Готово! Проверьте папку 'output/'.")
